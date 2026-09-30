@@ -1,0 +1,18 @@
+# deps
+node_modules/
+dist/
+
+# env
+.env
+.env.local
+.env.*.local
+frontend/.env.production
+
+# logs / os
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
+
+# vite
+frontend/dist/

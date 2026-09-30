@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-paper text-stone-900 antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+@layer components {
+  .glass {
+    @apply bg-white border border-hairline rounded-xl shadow-soft;
+  }
+  .panel-title {
+    @apply font-sans text-[11px] font-semibold tracking-[0.14em] text-stone-500 uppercase;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 font-sans text-[11px] font-medium px-2.5 py-1 rounded-full border;
+  }
+  .tactical-btn {
+    @apply font-sans text-xs font-medium px-3 py-2 rounded-lg border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 hover:border-stone-400 active:scale-[0.98] transition flex items-center gap-2 justify-center shadow-sm;
+  }
+  .section-label {
+    @apply font-sans text-[11px] font-semibold tracking-wide text-stone-500 uppercase;
+  }
+}
+
+input[type='range'] {
+  @apply w-full cursor-pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: #e7e5e4;
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #1b5e43;
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(28, 25, 23, 0.35);
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #1b5e43;
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(28, 25, 23, 0.35);
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f5f4f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6d3d1;
+  border-radius: 4px;
+}

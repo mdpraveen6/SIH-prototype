@@ -1,0 +1,12 @@
+{
+  "name": "sih26-sparsh",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SPARSH UGV autonomy dashboard - standalone Vite + React + Three.js prototype",
+  "scripts": {
+    "dev": "npm run dev --prefix frontend",
+    "install:all": "npm install --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "preview": "npm run preview --prefix frontend"
+  }
+}
