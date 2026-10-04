@@ -106,7 +106,7 @@ export default function Header() {
           >
             {sim.estop ? <Power size={14} /> : <OctagonX size={14} />} E-STOP
           </button>
-          <button onClick={() => sim.reset()} className="tactical-btn !px-2.5" title="Simulation Reset">
+          <button onClick={() => sim.reset()} disabled={sim.locked} className={`tactical-btn !px-2.5 ${sim.locked ? 'opacity-40' : ''}`} title="Simulation Reset">
             <RotateCcw size={14} />
           </button>
         </div>

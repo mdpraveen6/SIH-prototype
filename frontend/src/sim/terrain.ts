@@ -4,7 +4,7 @@
 export const WORLD_W = 240;
 export const WORLD_H = 150;
 
-export type SoilId = 'packed' | 'gravel' | 'sand' | 'clay' | 'rocky' | 'grass' | 'snow';
+export type SoilId = 'packed' | 'gravel' | 'sand' | 'clay' | 'rocky' | 'grass' | 'snow' | 'asphalt' | 'concrete' | 'crop';
 
 export interface SoilDef {
   id: SoilId;
@@ -22,7 +22,10 @@ export const SOILS: Record<SoilId, SoilDef> = {
   clay: { id: 'clay', label: 'CLAY / MUD', mu: 0.22, rgb: [96, 66, 44], slipMul: 1.7, loadMul: 1.6 },
   rocky: { id: 'rocky', label: 'ROCKY BED', mu: 0.55, rgb: [88, 86, 90], slipMul: 1.1, loadMul: 1.25 },
   grass: { id: 'grass', label: 'GRASS', mu: 0.62, rgb: [52, 84, 44], slipMul: 1.05, loadMul: 1.05 },
-  snow: { id: 'snow', label: 'SNOW', mu: 0.25, rgb: [231, 235, 240], slipMul: 1.8, loadMul: 1.35 }
+  snow: { id: 'snow', label: 'SNOW', mu: 0.25, rgb: [231, 235, 240], slipMul: 1.8, loadMul: 1.35 },
+  asphalt: { id: 'asphalt', label: 'ASPHALT', mu: 0.8, rgb: [46, 46, 50], slipMul: 0.9, loadMul: 0.9 },
+  concrete: { id: 'concrete', label: 'CONCRETE', mu: 0.75, rgb: [128, 128, 134], slipMul: 0.95, loadMul: 0.95 },
+  crop: { id: 'crop', label: 'CROP ROWS', mu: 0.5, rgb: [62, 102, 52], slipMul: 1.2, loadMul: 1.2 }
 };
 
 export interface PresetDef {
@@ -39,6 +42,19 @@ export interface PresetDef {
   mud: number;
   water: number;
   sand: number;
+  pits: number; // small (straddlable) mud pits
+  pitL: number; // large mud pits (survey → usually reroute)
+  holes: number; // potholes (survey → usually reroute)
+  cars: number; // parked vehicles (urban)
+  cones: number; // traffic cones / temporary markers
+  crops: number; // crop plants in row bands (farm)
+  posts: number; // fence posts / lamp poles
+  buildings: number; // farm + urban structures (solid)
+  roads?: Array<{ axis: 'x' | 'y'; at: number; w: number; soil: SoilId }>;
+  roundabout?: { x: number; y: number; r: number; w: number; soil: SoilId };
+  traffic?: { car: number; moto: number; ped: number; cycle: number; tractor: number; worker: number; animal: number };
+  zones?: Array<{ x0: number; y0: number; x1: number; y1: number; soil: SoilId }>;
+  spawn?: { x: number; y: number; theta: number };
   smoke: number;
   thermal: number;
   treeline: number | null; // trees only at/below this elevation (m)
@@ -50,27 +66,61 @@ export interface PresetDef {
 export const PRESETS: PresetDef[] = [
   {
     id: 'ghats', label: 'Western Ghats', desc: 'Dense wet forest · clay mud · streams',
-    seed: 1123, weights: { grass: 0.3, clay: 0.25, packed: 0.2, gravel: 0.1, rocky: 0.1, sand: 0.05, snow: 0 },
-    elevAmp: 3.0, elevFreq: 0.035, trees: 110, rocks: 14, bushes: 50, mud: 10, water: 5, sand: 0,
+    seed: 1123, weights: { grass: 0.3, clay: 0.25, packed: 0.2, gravel: 0.1, rocky: 0.1, sand: 0.05, snow: 0, asphalt: 0, concrete: 0, crop: 0 },
+    elevAmp: 3.0, elevFreq: 0.035, trees: 88, rocks: 14, bushes: 42, mud: 10, water: 5, sand: 0,
+    pits: 4, pitL: 2, holes: 2, cars: 0, cones: 0, crops: 0, posts: 0, buildings: 0,
     smoke: 12, thermal: 66, treeline: null, snowline: null, canopy: '#1d4a2c', canopyHi: '#2f6b40'
   },
   {
     id: 'thar', label: 'Thar Desert', desc: 'Dunes · dust · no trees · extreme heat',
-    seed: 4407, weights: { sand: 0.55, packed: 0.2, gravel: 0.15, rocky: 0.1, grass: 0, clay: 0, snow: 0 },
+    seed: 4407, weights: { sand: 0.55, packed: 0.2, gravel: 0.15, rocky: 0.1, grass: 0, clay: 0, snow: 0, asphalt: 0, concrete: 0, crop: 0 },
     elevAmp: 1.8, elevFreq: 0.022, trees: 0, rocks: 18, bushes: 30, mud: 0, water: 0, sand: 12,
+    pits: 2, pitL: 3, holes: 1, cars: 0, cones: 0, crops: 0, posts: 0, buildings: 0,
     smoke: 32, thermal: 88, treeline: null, snowline: null, canopy: '#5a5a2e', canopyHi: '#7a7a3c'
   },
   {
     id: 'himalaya', label: 'Himalayan Slope', desc: 'Pines below treeline · scree · snowfields',
-    seed: 8991, weights: { rocky: 0.4, gravel: 0.25, packed: 0.15, grass: 0.12, clay: 0.08, sand: 0, snow: 0 },
+    seed: 8991, weights: { rocky: 0.4, gravel: 0.25, packed: 0.15, grass: 0.12, clay: 0.08, sand: 0, snow: 0, asphalt: 0, concrete: 0, crop: 0 },
     elevAmp: 5.0, elevFreq: 0.045, trees: 40, rocks: 60, bushes: 18, mud: 2, water: 2, sand: 0,
+    pits: 2, pitL: 1, holes: 2, cars: 0, cones: 0, crops: 0, posts: 0, buildings: 0,
     smoke: 6, thermal: 52, treeline: 0.8, snowline: 1.7, canopy: '#16382f', canopyHi: '#1f5142'
   },
   {
     id: 'deccan', label: 'Deccan Plateau', desc: 'Granite tors · gravel · scrub · waterhole',
-    seed: 6234, weights: { gravel: 0.3, packed: 0.25, rocky: 0.2, grass: 0.15, clay: 0.1, sand: 0, snow: 0 },
+    seed: 6234, weights: { gravel: 0.3, packed: 0.25, rocky: 0.2, grass: 0.15, clay: 0.1, sand: 0, snow: 0, asphalt: 0, concrete: 0, crop: 0 },
     elevAmp: 2.2, elevFreq: 0.028, trees: 16, rocks: 45, bushes: 28, mud: 4, water: 2, sand: 2,
+    pits: 3, pitL: 2, holes: 3, cars: 0, cones: 0, crops: 0, posts: 0, buildings: 0,
     smoke: 10, thermal: 74, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35'
+  },
+  {
+    id: 'urban', label: 'Urban Road', desc: 'Avenues · roundabout · parked cars · signals',
+    seed: 5150, weights: { asphalt: 0.4, concrete: 0.22, packed: 0.12, grass: 0.08, gravel: 0.08, rocky: 0.02, sand: 0.02, clay: 0.02, snow: 0, crop: 0 },
+    elevAmp: 0.5, elevFreq: 0.015, trees: 12, rocks: 0, bushes: 8, mud: 0, water: 0, sand: 0,
+    pits: 1, pitL: 0, holes: 1, cars: 17, cones: 10, crops: 0, posts: 11, buildings: 10,
+    smoke: 18, thermal: 72, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35',
+    roads: [
+      { axis: 'x', at: 0, w: 9, soil: 'asphalt' },
+      { axis: 'y', at: -8, w: 7, soil: 'asphalt' }
+    ],
+    roundabout: { x: 28, y: -14, r: 7, w: 5, soil: 'asphalt' },
+    traffic: { car: 5, moto: 2, ped: 4, cycle: 1, tractor: 0, worker: 0, animal: 0 }
+  },
+  {
+    id: 'farm', label: 'Agri Farm', desc: 'Crop rows · dirt track · irrigation · livestock',
+    seed: 7300, weights: { grass: 0.22, packed: 0.18, clay: 0.2, gravel: 0.08, rocky: 0.06, sand: 0.04, crop: 0.2, asphalt: 0, concrete: 0.02, snow: 0 },
+    elevAmp: 2.0, elevFreq: 0.03, trees: 20, rocks: 16, bushes: 24, mud: 8, water: 10, sand: 0,
+    pits: 3, pitL: 1, holes: 2, cars: 0, cones: 0, crops: 800, posts: 0, buildings: 0,
+    smoke: 8, thermal: 70, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35',
+    zones: [
+      { x0: -75, y0: -45, x1: -30, y1: -20, soil: 'crop' },
+      { x0: -24, y0: -45, x1: 21, y1: -20, soil: 'crop' },
+      { x0: 27, y0: -45, x1: 72, y1: -20, soil: 'packed' },
+      { x0: -75, y0: -14, x1: -30, y1: 11, soil: 'clay' },
+      { x0: -24, y0: -14, x1: 21, y1: 11, soil: 'crop' },
+      { x0: 27, y0: -14, x1: 72, y1: 11, soil: 'crop' }
+    ],
+    spawn: { x: 2, y: -17, theta: 0 },
+    traffic: { car: 0, moto: 0, ped: 0, cycle: 0, tractor: 1, worker: 3, animal: 4 }
   }
 ];
 
@@ -121,16 +171,45 @@ function fbm(x: number, y: number, s: number, oct: number): number {
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
-const SOIL_ORDER: SoilId[] = ['grass', 'packed', 'gravel', 'sand', 'clay', 'rocky', 'snow'];
+const SOIL_ORDER: SoilId[] = ['grass', 'packed', 'gravel', 'sand', 'clay', 'rocky', 'snow', 'asphalt', 'concrete', 'crop'];
 
 export class Terrain {
   preset: PresetDef;
   constructor(p: PresetDef) {
     this.preset = p;
   }
+  /** Field plot query: soil override inside surveyed field rectangles. */
+  zoneAt(x: number, y: number): SoilId | null {
+    for (const z of this.preset.zones ?? []) {
+      if (x >= z.x0 - 1 && x <= z.x1 + 1 && y >= z.y0 - 1 && y <= z.y1 + 1) return z.soil;
+    }
+    return null;
+  }
+  /** Road corridor query: { soil, mask } with a 2 m feathered edge.
+   *  mask = 1 deep inside the corridor, 0 outside. */
+  roadAt(x: number, y: number): { soil: SoilId; mask: number } | null {
+    const p = this.preset;
+    let best: { soil: SoilId; mask: number } | null = null;
+    const strip = (d: number, w: number, soil: SoilId) => {
+      const m = clamp(1 - Math.max(0, Math.abs(d) - w / 2) / 2, 0, 1);
+      if (m > 0 && (!best || m > best.mask)) best = { soil, mask: m };
+    };
+    for (const r of p.roads ?? []) {
+      strip(r.axis === 'x' ? y - r.at : x - r.at, r.w, r.soil);
+    }
+    const rb = p.roundabout;
+    if (rb) {
+      const d = Math.abs(Math.hypot(x - rb.x, y - rb.y) - rb.r);
+      strip(d - rb.w / 2, rb.w, rb.soil);
+    }
+    return best;
+  }
   elevAt(x: number, y: number): number {
     const p = this.preset;
-    return p.elevAmp * (fbm(x * p.elevFreq + 13.7, y * p.elevFreq + 7.3, p.seed, 3) * 2 - 1);
+    const e = p.elevAmp * (fbm(x * p.elevFreq + 13.7, y * p.elevFreq + 7.3, p.seed, 3) * 2 - 1);
+    // grade corridors flat: roads cut through the noise like real grading
+    const road = this.roadAt(x, y);
+    return road ? e * (1 - 0.92 * road.mask) : e;
   }
   slopeAt(x: number, y: number): { dx: number; dy: number; mag: number } {
     const e = 0.6;
@@ -140,6 +219,10 @@ export class Terrain {
   }
   soilAt(x: number, y: number): SoilDef {
     const p = this.preset;
+    const road = this.roadAt(x, y);
+    if (road && road.mask > 0.5) return SOILS[road.soil];
+    const zone = this.zoneAt(x, y);
+    if (zone) return SOILS[zone];
     const e = this.elevAt(x, y);
     if (p.snowline !== null && e > p.snowline) return SOILS.snow;
     const en = e / Math.max(0.001, p.elevAmp);
@@ -162,6 +245,33 @@ export function effMuAt(x: number, y: number, friction: number): { soil: SoilDef
   const soil = activeTerrain.soilAt(x, y);
   return { soil, mu: clamp(soil.mu * (0.45 + friction), 0.05, 0.95) };
 }
+
+// Measured soil distribution per preset: grid-samples the real generator
+// (elevation + snowline rules included), so the classifier compares against
+// what is actually on the ground — not the nominal recipe weights.
+const profileCache = new Map<string, Record<SoilId, number>>();
+export function soilProfile(presetId: string): Record<SoilId, number> {
+  const hit = profileCache.get(presetId);
+  if (hit) return hit;
+  const p = PRESETS.find((q) => q.id === presetId) ?? PRESETS[0];
+  const probe = new Terrain(p);
+  const counts = {} as Record<SoilId, number>;
+  for (const id of SOIL_ORDER) counts[id] = 0;
+  const NX = 48;
+  const NY = 30;
+  for (let iy = 0; iy < NY; iy++) {
+    for (let ix = 0; ix < NX; ix++) {
+      const x = -WORLD_W / 2 + ((ix + 0.5) / NX) * WORLD_W;
+      const y = -WORLD_H / 2 + ((iy + 0.5) / NY) * WORLD_H;
+      counts[probe.soilAt(x, y).id]++;
+    }
+  }
+  const total = NX * NY;
+  for (const id of SOIL_ORDER) counts[id] /= total;
+  profileCache.set(presetId, counts);
+  return counts;
+}
+export const PROFILE_SOILS: SoilId[] = [...SOIL_ORDER];
 
 export let activeTerrain = new Terrain(PRESETS[0]);
 

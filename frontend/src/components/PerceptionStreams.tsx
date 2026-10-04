@@ -38,11 +38,25 @@ function useFeed(draw: (ctx: CanvasRenderingContext2D, w: number, h: number, t: 
 
 const KIND_COLOR: Record<string, string> = {
   boulder: '#f43f5e', mud: '#fb923c', smoke: '#94a3b8', tree: '#22c55e',
-  bush: '#4ade80', water: '#38bdf8', sand: '#eab308'
+  bush: '#4ade80', water: '#38bdf8', sand: '#eab308',
+  pit_small: '#d97706', pit_large: '#92400e', pothole: '#a8a29e',
+  barrel: '#ef4444', tirepile: '#57534e', log: '#a16207',
+  drum: '#f97316', cairn: '#d6d3d1', mound: '#ca8a04',
+  car_parked: '#60a5fa', cone: '#fb923c', crop: '#4ade80',
+  post: '#a8a29e', building: '#78716c',
+  car: '#93c5fd', moto: '#fcd34d', ped: '#f472b6',
+  tractor: '#4ade80', animal: '#d6a05c'
 };
 const KIND_LABEL: Record<string, string> = {
   boulder: 'BOULDER', mud: 'MUD-PIT', smoke: 'SMOKE', tree: 'TREE',
-  bush: 'BUSH', water: 'WATER', sand: 'SAND-PIT'
+  bush: 'BUSH', water: 'WATER', sand: 'SAND-PIT',
+  pit_small: 'PIT-S', pit_large: 'PIT-L', pothole: 'POTHOLE',
+  barrel: 'BARREL', tirepile: 'TIRE PILE', log: 'FALLEN LOG',
+  drum: 'RUSTED DRUM', cairn: 'STONE CAIRN', mound: 'TERMITE MOUND',
+  car_parked: 'PARKED CAR', cone: 'CONE', crop: 'CROP',
+  post: 'POST', building: 'BUILDING',
+  car: 'CAR', moto: 'MOTO', ped: 'PEDESTRIAN',
+  tractor: 'TRACTOR', animal: 'LIVESTOCK'
 };
 
 // Classic ironbow: black -> violet -> red -> orange -> yellow -> white
@@ -119,8 +133,8 @@ export default function PerceptionStreams() {
   const smoke = sim.effectiveSmoke();
   const snr = smoke > SNR_SMOKE_CUTOVER;
   const degraded = smoke > 55;
-  const palRef = useRef<ThermoPalette>('white');
-  const [pal, setPal] = useState<ThermoPalette>('white');
+  const palRef = useRef<ThermoPalette>('iron');
+  const [pal, setPal] = useState<ThermoPalette>('iron');
   const setPalette = (p: ThermoPalette) => {
     palRef.current = p;
     setPal(p);
@@ -132,54 +146,12 @@ export default function PerceptionStreams() {
     const w = W / dpr;
     const h = H / dpr;
     const night = sim.night;
-    if (night) {
-      // night: near-black scene lit only by the headlight wedge; thermal carries detection
-      ctx.fillStyle = '#04070d';
-      ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = '#070b08';
-      ctx.fillRect(0, h * 0.45, w, h * 0.55);
-      const wg = ctx.createLinearGradient(0, h * 0.4, 0, h);
-      wg.addColorStop(0, 'rgba(255,240,200,0)');
-      wg.addColorStop(1, 'rgba(255,240,200,0.30)');
-      ctx.fillStyle = wg;
-      ctx.beginPath();
-      ctx.moveTo(w / 2 - 12, h * 0.45);
-      ctx.lineTo(w / 2 + 12, h * 0.45);
-      ctx.lineTo(w * 0.85, h);
-      ctx.lineTo(w * 0.15, h);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = 'rgba(148,163,184,0.9)';
-      ctx.font = '600 9px Inter, sans-serif';
-      ctx.fillText('NIGHT · HEADLIGHT + THERMAL PRIMARY', 8, 14);
-    } else {
-      const sky = ctx.createLinearGradient(0, 0, 0, h * 0.45);
-      sky.addColorStop(0, '#020617');
-      sky.addColorStop(1, '#0e2a3a');
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, w, h * 0.45);
-      const gnd = ctx.createLinearGradient(0, h * 0.45, 0, h);
-      gnd.addColorStop(0, '#134e4a');
-      gnd.addColorStop(1, '#04201c');
-      ctx.fillStyle = gnd;
-      ctx.fillRect(0, h * 0.45, w, h * 0.55);
-    }
-    if (!night) {
-      ctx.strokeStyle = 'rgba(52,211,153,0.25)';
-      ctx.lineWidth = 1;
-      const off = (t * sim.actV * 22) % 26;
-      ctx.beginPath();
-      for (let i = -8; i <= 8; i++) {
-        ctx.moveTo(w / 2 + i * 14, h * 0.45);
-        ctx.lineTo(w / 2 + i * 46, h);
-      }
-      for (let j = 0; j < 6; j++) {
-        const y = h * 0.45 + ((j * 26 + off) / (6 * 26)) * h * 0.55;
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-      }
-      ctx.stroke();
-    }
+    // thermal black screen: heat sources read as glowing circles on black
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(148,163,184,0.9)';
+    ctx.font = '600 9px Inter, sans-serif';
+    ctx.fillText(night ? 'LWIR · BLACK-HOT THERMAL · 25 M' : 'LWIR · THERMAL OVERLAY · 25 M', 8, 14);
 
     if (snr) {
       for (let i = 0; i < 900; i++) {
@@ -212,17 +184,21 @@ export default function PerceptionStreams() {
       bx: number; by: number; bw: number; bh: number; fwd: number; temp: number;
     }
     const vis: Vis[] = [];
+    // Layer-1 detection window: everything inside 25 m, nothing beyond
+    const DETECT_M = 25;
     for (const o of sim.obstacles) {
       const rx = o.x - pose.x;
       const ry = o.y - pose.y;
       const fwd = rx * fx + ry * fy;
-      if (fwd < 1 || fwd > 20) continue;
+      if (fwd < 0.5 || fwd > DETECT_M) continue;
       const lat = rx * fy - ry * fx;
       if (Math.abs(lat) > 8) continue;
       const bx = w / 2 + (lat / 8) * (w / 2);
-      const bw = Math.min(w * 0.5, (3 / fwd) * w * 0.3 + 20);
-      const bh = bw * (o.kind === 'smoke' ? 0.7 : 0.55);
-      const by = h * 0.45 + (1 - fwd / 20) * h * 0.4;
+      // fixed detection box: same height/width at every range — nearness
+      // reads from screen position + distance label, never from box growth
+      const bw = 52;
+      const bh = 52;
+      const by = h * 0.45 + (1 - fwd / DETECT_M) * h * 0.4;
       vis.push({ o, bx, by, bw, bh, fwd, temp: obstacleTemp(o, sim.effectiveThermal(), night) });
     }
     // radiometric scale shared by colors, contours and tags
@@ -230,45 +206,123 @@ export default function PerceptionStreams() {
     for (const v of vis) tMax = Math.max(tMax, v.temp + 2);
     const tMin = air - 4;
     const tnorm = (c: number) => (c - tMin) / Math.max(1e-6, tMax - tMin);
-    // dim the RGB base so the thermal layer reads like a Boson feed
-    ctx.fillStyle = night ? 'rgba(2,4,8,0.55)' : 'rgba(2,6,16,0.62)';
-    ctx.fillRect(0, 0, w, h);
-    // ambient vertical wash (sky cold, ground near air temp)
     const pal = palRef.current;
-    const wash = ctx.createLinearGradient(0, 0, 0, h);
-    wash.addColorStop(0, thermoCss(pal, tnorm(tMin + 1), 0.5));
-    wash.addColorStop(0.45, thermoCss(pal, tnorm(air - 1), 0.5));
-    wash.addColorStop(1, thermoCss(pal, tnorm(air + 1.5), 0.55));
-    ctx.fillStyle = wash;
-    ctx.fillRect(0, 0, w, h);
-    // per-object radiometric blobs with isotherm contour rings
+    // nearest detection for the range readout + sightline
+    let nearFwd = Infinity;
+    let nearBX = 0;
+    let nearBY = 0;
+    let nearLabel = '—';
+    for (const v of vis) {
+      if (v.fwd < nearFwd) {
+        nearFwd = v.fwd;
+        nearBX = v.bx;
+        nearBY = v.by;
+        nearLabel = KIND_LABEL[v.o.kind] ?? v.o.kind;
+      }
+    }
+    // every heat source is a glowing circle on the black screen
     for (const v of vis) {
       const t01 = tnorm(v.temp);
-      const alpha = night ? 0.95 : 0.9;
-      const g = ctx.createRadialGradient(v.bx, v.by, 0, v.bx, v.by, v.bw);
-      g.addColorStop(0, thermoCss(pal, t01, alpha));
-      g.addColorStop(0.55, thermoCss(pal, t01 * 0.62, alpha * 0.85));
+      const r = 26; // fixed heat-circle radius, matches the fixed box
+      const g = ctx.createRadialGradient(v.bx, v.by, 0, v.bx, v.by, r);
+      g.addColorStop(0, thermoCss(pal, t01, 0.95));
+      g.addColorStop(0.55, thermoCss(pal, t01 * 0.62, 0.8));
       g.addColorStop(1, thermoCss(pal, tnorm(air), 0));
       ctx.fillStyle = g;
-      ctx.fillRect(v.bx - v.bw, v.by - v.bh, v.bw * 2, v.bh * 2);
-      // isotherm contours on hot targets
+      ctx.beginPath();
+      ctx.arc(v.bx, v.by, r, 0, Math.PI * 2);
+      ctx.fill();
+      // heat circle outline + isotherm rings on hot targets
+      ctx.strokeStyle = thermoCss(pal, Math.min(1, t01 + 0.1), 0.9);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(v.bx, v.by, r, 0, Math.PI * 2);
+      ctx.stroke();
       if (t01 > 0.55) {
         ctx.strokeStyle = thermoCss(pal, Math.min(1, t01 + 0.15), 0.5);
         ctx.lineWidth = 1;
         for (let k = 1; k <= 2; k++) {
           ctx.beginPath();
-          ctx.ellipse(v.bx, v.by, (v.bw * k) / 3, (v.bh * k) / 3, 0, 0, Math.PI * 2);
+          ctx.arc(v.bx, v.by, (r * k) / 3, 0, Math.PI * 2);
           ctx.stroke();
         }
       }
-      const conf = Math.max(41, 97 - v.fwd * 2.4 - smoke * 0.25).toFixed(1);
-      bracketBox(
-        ctx, v.bx - v.bw / 2, v.by - v.bh, v.bw, v.bh,
-        night || pal !== 'iron' ? '#ffffff' : KIND_COLOR[v.o.kind],
-        night ? 2 : 1.5,
-        `${KIND_LABEL[v.o.kind]} ${conf}% · ${v.temp.toFixed(1)}°C`
-      );
+      // square detection box with obstacle name (10 m window, near or far)
+      const boxColor = KIND_COLOR[v.o.kind] ?? '#ffffff';
+      ctx.strokeStyle = boxColor;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(v.bx - r, v.by - r, r * 2, r * 2);
+      const name = `${KIND_LABEL[v.o.kind] ?? v.o.kind} · ${v.fwd.toFixed(1)}m`;
+      ctx.font = '600 9px "IBM Plex Mono", monospace';
+      const nw = ctx.measureText(name).width;
+      const nx = Math.min(Math.max(v.bx - nw / 2, 2), w - nw - 4);
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(nx - 3, v.by - r - 17, nw + 10, 14);
+      ctx.fillStyle = boxColor;
+      ctx.fillText(name, nx + 2, v.by - r - 6);
+      const conf = Math.max(41, 98 - v.fwd * 1.6 - smoke * 0.25).toFixed(1);
+      const label = `${KIND_LABEL[v.o.kind] ?? v.o.kind} ${conf}% · ${v.temp.toFixed(1)}°C · ${v.fwd.toFixed(1)}m`;
+      ctx.font = '9px "IBM Plex Mono", monospace';
+      const tw = ctx.measureText(label).width;
+      const tx = Math.min(Math.max(v.bx - tw / 2, 2), w - tw - 4);
+      ctx.fillStyle = 'rgba(0,0,0,0.68)';
+      ctx.fillRect(tx - 2, v.by + r + 3, tw + 8, 14);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, tx + 2, v.by + r + 13);
     }
+    // toy UGV ego marker (bottom-center) + sightline + range readout:
+    // every Layer-1 distance is measured from this toy
+    const egoX = w / 2;
+    const egoY = h - 12;
+    if (nearFwd < Infinity) {
+      ctx.strokeStyle = 'rgba(52,211,153,0.55)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(egoX, egoY - 8);
+      ctx.lineTo(nearBX, nearBY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const midX = (egoX + nearBX) / 2;
+      const midY = (egoY - 8 + nearBY) / 2;
+      const rl = `${nearFwd.toFixed(1)}m`;
+      ctx.font = '600 9px "IBM Plex Mono", monospace';
+      const rw = ctx.measureText(rl).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(midX - rw / 2 - 3, midY - 8, rw + 6, 12);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText(rl, midX - rw / 2, midY + 2);
+    }
+    // toy: rounded hull + 4 wheels + heading notch, facing up-screen
+    ctx.fillStyle = '#0b1220';
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(egoX - 11, egoY - 9, 22, 15, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#34d399';
+    for (const [wx, wy] of [[-13, -7], [9, -7], [-13, 2], [9, 2]] as const) {
+      ctx.fillRect(egoX + wx, egoY + wy, 4, 4);
+    }
+    ctx.beginPath();
+    ctx.moveTo(egoX - 4, egoY - 9);
+    ctx.lineTo(egoX + 4, egoY - 9);
+    ctx.lineTo(egoX, egoY - 13);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = '600 8px "IBM Plex Mono", monospace';
+    ctx.fillStyle = '#34d399';
+    ctx.fillText('UGV', egoX - 9, egoY + 14);
+    ctx.font = '600 9px "IBM Plex Mono", monospace';
+    const rangeLine = nearFwd < Infinity
+      ? `NEAREST ${nearLabel} ${nearFwd.toFixed(1)}m · ${vis.length} ≤25m`
+      : `${vis.length} ≤25m · CLEAR`;
+    const rlw = ctx.measureText(rangeLine).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(w - rlw - 10, 6, rlw + 8, 15);
+    ctx.fillStyle = nearFwd < 2 ? '#f43f5e' : '#e2e8f0';
+    ctx.fillText(rangeLine, w - rlw - 6, 17);
     // NETD sensor grain
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
     for (let i = 0; i < 220; i++) {
@@ -366,6 +420,20 @@ export default function PerceptionStreams() {
   let tHi = tAir + 4;
   for (const o of sim.obstacles) tHi = Math.max(tHi, obstacleTemp(o, thermEff, sim.night) + 2);
   const tLo = tAir - 4;
+  // Layer-1 detection census: obstacles inside the 25 m thermal window
+  let tracked10 = 0;
+  {
+    const fx = Math.cos(sim.pose.theta);
+    const fy = Math.sin(sim.pose.theta);
+    for (const o of sim.obstacles) {
+      const rx = o.x - sim.pose.x;
+      const ry = o.y - sim.pose.y;
+      const fwd = rx * fx + ry * fy;
+      if (fwd < 0.5 || fwd > 25) continue;
+      if (Math.abs(rx * fy - ry * fx) > 8) continue;
+      tracked10++;
+    }
+  }
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, delay: 0.08 }} className="glass p-4">
@@ -383,7 +451,7 @@ export default function PerceptionStreams() {
           </div>
           <canvas ref={rgbRef} className="w-full rounded-lg border border-stone-200" />
           <p className="font-sans text-[10px] text-stone-400 mt-1">
-            TensorRT INT8 · {L.fps.toFixed(0)} FPS · {L.lat.toFixed(1)} ms · {snr ? 'SNR collapse — Layer-0 exclusive' : degraded ? 'Fallback to Layer-0' : sim.night ? 'Night — thermal primary' : 'Segmentation live'}
+            TensorRT INT8 · {L.fps.toFixed(0)} FPS · {L.lat.toFixed(1)} ms · {tracked10} tracked ≤25m · {snr ? 'SNR collapse — Layer-0 exclusive' : degraded ? 'Fallback to Layer-0' : sim.night ? 'Night — thermal primary' : 'Segmentation live'}
           </p>
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <div className="flex rounded-md overflow-hidden border border-stone-300">

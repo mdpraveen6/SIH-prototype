@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { motion } from 'framer-motion';
 import { MousePointerClick, Trash2 } from 'lucide-react';
 import { HARD_KINDS, SparshSim, useSim, useSimView, WORLD_H, WORLD_W } from '../sim/store';
+import { SURVEY_HOLD, isSolidObstacle } from '../sim/hazards';
 import { activeTerrain, effMuAt, mulberry32 } from '../sim/terrain';
 import {
   MPPI_K, lidarPartial, lidarRadius, mppiRollouts, rayCircle, tauColor, traversability
@@ -29,10 +30,17 @@ function makePuffTexture(): THREE.CanvasTexture {
 
 const KIND_DOT: Record<string, string> = {
   boulder: '#a8a29e', tree: '#22c55e', mud: '#fb923c', water: '#38bdf8',
-  sand: '#eab308', bush: '#4ade80', smoke: '#94a3b8'
+  sand: '#eab308', bush: '#4ade80', smoke: '#94a3b8',
+  pit_small: '#d97706', pit_large: '#92400e', pothole: '#a8a29e',
+  barrel: '#ef4444', tirepile: '#57534e', log: '#a16207',
+  drum: '#f97316', cairn: '#d6d3d1', mound: '#ca8a04',
+  car_parked: '#60a5fa', cone: '#fb923c', crop: '#4ade80',
+  post: '#a8a29e', building: '#78716c',
+  car: '#93c5fd', moto: '#fcd34d', ped: '#f472b6',
+  tractor: '#4ade80', animal: '#d6a05c'
 };
 
-const CAP = { tree: 260, rock: 150, bush: 150 };
+const CAP = { tree: 260, rock: 150, bush: 150, crop: 560 };
 
 export interface MapView {
   cx: number;
@@ -74,7 +82,7 @@ export function drawTacticalMap(
   }
   if (now - cache.at > 350) {
     cache.at = now;
-    const r = mppiRollouts(pose.x, pose.y, pose.theta, sim.actV, params.friction, obstacles, sim.simTime, sim.latest.snrDegraded, sim.caution);
+    const r = mppiRollouts(pose.x, pose.y, pose.theta, sim.actV, params.friction, obstacles, sim.simTime, sim.latest.snrDegraded, sim.caution, sim.planMargin());
     cache.last = r.paths[r.best].pts;
   }
   if (sim.route.length > 1) {
@@ -405,7 +413,12 @@ export default function SimulationCanvas() {
       new THREE.MeshStandardMaterial({ color: '#2f6b3c', roughness: 1, flatShading: true }),
       CAP.bush
     );
-    for (const m of [trunkMesh, canopyMesh, canopyTopMesh, rockMesh, bushMesh]) {
+    const cropMesh = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(0.5, 1.1, 6),
+      new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }),
+      CAP.crop
+    );
+    for (const m of [trunkMesh, canopyMesh, canopyTopMesh, rockMesh, bushMesh, cropMesh]) {
       m.castShadow = true;
       m.receiveShadow = true;
       m.count = 0;
@@ -424,6 +437,7 @@ export default function SimulationCanvas() {
       let pi = 0;
       let ri = 0;
       let bi = 0;
+      let gi = 0;
       for (const o of obs) {
         const y = activeTerrain.elevAt(o.x, o.y);
         if (o.kind === 'tree' && ti < CAP.tree) {
@@ -463,6 +477,24 @@ export default function SimulationCanvas() {
           dummy.updateMatrix();
           bushMesh.setMatrixAt(bi++, dummy.matrix);
           dummy.scale.setScalar(1);
+        } else if (o.kind === 'crop' && gi < CAP.crop) {
+          // crop tuft: height/color by field variant (wheat gold, maize tall,
+          // stubble brown stumps, seedling small green) — scaled to read
+          // from the 13 m chase view, not just the tac-map
+          const v = o.variant ?? 'wheat';
+          const tall = v === 'maize' ? 3.4 : v === 'seedling' ? 0.9 : v === 'stubble' ? 0.6 : 2.2;
+          dummy.position.set(w2x(o.x), y + o.r * tall * 0.5, w2z(o.y));
+          dummy.scale.set(o.r * 1.6, o.r * tall, o.r * 1.6);
+          dummy.rotation.set(0, o.id * 2.1, 0);
+          dummy.updateMatrix();
+          cropMesh.setMatrixAt(gi, dummy.matrix);
+          const gv = 0.75 + ((o.id * 53) % 10) / 10 * 0.5;
+          if (v === 'wheat') cropMesh.setColorAt(gi, tmpColor.setRGB(0.55 * gv, 0.45 * gv, 0.16 * gv));
+          else if (v === 'maize') cropMesh.setColorAt(gi, tmpColor.setRGB(0.16 * gv, 0.42 * gv, 0.14 * gv));
+          else if (v === 'stubble') cropMesh.setColorAt(gi, tmpColor.setRGB(0.45 * gv, 0.33 * gv, 0.18 * gv));
+          else cropMesh.setColorAt(gi, tmpColor.setRGB(0.35 * gv, 0.6 * gv, 0.25 * gv));
+          dummy.scale.setScalar(1);
+          gi++;
         }
       }
       trunkMesh.count = ti;
@@ -470,8 +502,10 @@ export default function SimulationCanvas() {
       canopyTopMesh.count = pi;
       rockMesh.count = ri;
       bushMesh.count = bi;
-      for (const m of [trunkMesh, canopyMesh, canopyTopMesh, rockMesh, bushMesh]) m.instanceMatrix.needsUpdate = true;
+      cropMesh.count = gi;
+      for (const m of [trunkMesh, canopyMesh, canopyTopMesh, rockMesh, bushMesh, cropMesh]) m.instanceMatrix.needsUpdate = true;
       if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
+      if (cropMesh.instanceColor) cropMesh.instanceColor.needsUpdate = true;
     };
 
     // ---------- decals + smoke (rebuilt only when the set changes) ----------
@@ -494,7 +528,7 @@ export default function SimulationCanvas() {
       }
     };
     const syncDecals = () => {
-      const sig = sim.obstacles.map((o) => `${o.id}:${o.kind}:${o.r.toFixed(2)}`).join(',');
+      const sig = sim.obstacles.map((o) => `${o.id}:${o.kind}:${o.r.toFixed(2)}:${o.verdict ?? ''}`).join(',');
       if (sig === decalSig) return;
       decalSig = sig;
       disposeGroup(decalGroup);
@@ -516,6 +550,168 @@ export default function SimulationCanvas() {
           mesh.position.set(w2x(o.x), y + 0.05, w2z(o.y));
           mesh.receiveShadow = true;
           decalGroup.add(mesh);
+        } else if (o.kind === 'pit_small' || o.kind === 'pit_large' || o.kind === 'pothole') {
+          // pit: dark sunken disc + muddy rim; failed surveys get a red rim
+          const pitColor = o.kind === 'pothole' ? '#141110' : o.kind === 'pit_large' ? '#241708' : '#3a2413';
+          const disc = new THREE.Mesh(
+            new THREE.CircleGeometry(o.r, 26),
+            new THREE.MeshStandardMaterial({
+              color: pitColor, roughness: 1, transparent: true, opacity: 0.95,
+              polygonOffset: true, polygonOffsetFactor: -2
+            })
+          );
+          disc.rotation.x = -Math.PI / 2;
+          disc.scale.y = 0.8;
+          disc.position.set(w2x(o.x), y + 0.04, w2z(o.y));
+          disc.receiveShadow = true;
+          decalGroup.add(disc);
+          const rim = new THREE.Mesh(
+            new THREE.RingGeometry(o.r * 0.92, o.r * 1.12, 30),
+            new THREE.MeshBasicMaterial({
+              color: o.verdict === 'fail' ? '#DC2626' : o.verdict === 'pass' ? '#22c55e' : '#a16207',
+              transparent: true, opacity: 0.85, side: THREE.DoubleSide
+            })
+          );
+          rim.rotation.x = -Math.PI / 2;
+          rim.position.set(w2x(o.x), y + 0.06, w2z(o.y));
+          decalGroup.add(rim);
+        } else if (o.kind === 'barrel' || o.kind === 'drum') {
+          // waste barrel / rusted drum: upright rusted cylinder + dark band
+          const body = new THREE.Mesh(
+            new THREE.CylinderGeometry(o.r * 0.62, o.r * 0.62, o.r * 1.9, 14),
+            new THREE.MeshStandardMaterial({ color: o.kind === 'drum' ? '#9a3412' : '#7c2d12', roughness: 0.85, metalness: 0.3 })
+          );
+          body.position.set(w2x(o.x), y + o.r * 0.95, w2z(o.y));
+          body.castShadow = true;
+          decalGroup.add(body);
+          const band = new THREE.Mesh(
+            new THREE.CylinderGeometry(o.r * 0.65, o.r * 0.65, o.r * 0.22, 14),
+            new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.9 })
+          );
+          band.position.set(w2x(o.x), y + o.r * 1.15, w2z(o.y));
+          decalGroup.add(band);
+        } else if (o.kind === 'tirepile') {
+          // waste tires: two stacked torus rings
+          for (let k = 0; k < 2; k++) {
+            const tire = new THREE.Mesh(
+              new THREE.TorusGeometry(o.r * 0.55, o.r * 0.28, 10, 20),
+              new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.95 })
+            );
+            tire.rotation.x = -Math.PI / 2;
+            tire.position.set(w2x(o.x), y + o.r * 0.28 + k * o.r * 0.5, w2z(o.y));
+            tire.castShadow = true;
+            decalGroup.add(tire);
+          }
+        } else if (o.kind === 'log') {
+          // fallen log: horizontal trunk + cut end
+          const trunk = new THREE.Mesh(
+            new THREE.CylinderGeometry(o.r * 0.55, o.r * 0.65, o.r * 4.2, 10),
+            new THREE.MeshStandardMaterial({ color: '#4a2f1c', roughness: 1 })
+          );
+          trunk.rotation.z = Math.PI / 2;
+          trunk.rotation.y = o.id * 1.7;
+          trunk.position.set(w2x(o.x), y + o.r * 0.55, w2z(o.y));
+          trunk.castShadow = true;
+          decalGroup.add(trunk);
+        } else if (o.kind === 'cairn') {
+          // stone cairn: three stacked stones, shrinking upward
+          const sizes: Array<[number, number]> = [[0.85, 0.3], [0.6, 0.75], [0.38, 1.1]];
+          for (const [s, hy] of sizes) {
+            const stone = new THREE.Mesh(
+              new THREE.DodecahedronGeometry(o.r * s, 0),
+              new THREE.MeshStandardMaterial({ color: '#78716c', roughness: 0.95, flatShading: true })
+            );
+            stone.position.set(w2x(o.x), y + o.r * hy, w2z(o.y));
+            stone.rotation.y = o.id + hy * 3;
+            stone.castShadow = true;
+            decalGroup.add(stone);
+          }
+        } else if (o.kind === 'mound') {
+          // termite mound: rough cone + dark vent hole
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(o.r, o.r * 1.5, 12),
+            new THREE.MeshStandardMaterial({ color: '#92400e', roughness: 1, flatShading: true })
+          );
+          cone.position.set(w2x(o.x), y + o.r * 0.72, w2z(o.y));
+          cone.castShadow = true;
+          decalGroup.add(cone);
+        } else if (o.kind === 'car_parked') {
+          // parked car: body + cabin, color varies by id
+          const paint = new THREE.Color().setHSL(((o.id * 0.37) % 1), 0.45, 0.42);
+          const bodyC = new THREE.Mesh(
+            new THREE.BoxGeometry(o.r * 2.0, o.r * 0.55, o.r * 0.95),
+            new THREE.MeshStandardMaterial({ color: paint, roughness: 0.4, metalness: 0.4 })
+          );
+          bodyC.rotation.y = (o.id % 2) * Math.PI;
+          bodyC.position.set(w2x(o.x), y + o.r * 0.45, w2z(o.y));
+          bodyC.castShadow = true;
+          decalGroup.add(bodyC);
+          const cabin = new THREE.Mesh(
+            new THREE.BoxGeometry(o.r * 1.0, o.r * 0.45, o.r * 0.8),
+            new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.2, metalness: 0.5 })
+          );
+          cabin.rotation.y = bodyC.rotation.y;
+          cabin.position.set(w2x(o.x), y + o.r * 0.9, w2z(o.y));
+          cabin.castShadow = true;
+          decalGroup.add(cabin);
+        } else if (o.kind === 'cone') {
+          const coneM = new THREE.Mesh(
+            new THREE.ConeGeometry(o.r * 0.7, o.r * 2.2, 10),
+            new THREE.MeshStandardMaterial({ color: '#ea580c', roughness: 0.7 })
+          );
+          coneM.position.set(w2x(o.x), y + o.r * 1.1, w2z(o.y));
+          coneM.castShadow = true;
+          decalGroup.add(coneM);
+        } else if (o.kind === 'post') {
+          // fence post vs street-lamp pole (tall flag)
+          const h = o.tall ? 4.2 : 1.1;
+          const pole = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.06, 0.08, h, 6),
+            new THREE.MeshStandardMaterial({ color: o.tall ? '#44403c' : '#57534e', roughness: 0.8 })
+          );
+          pole.position.set(w2x(o.x), y + h / 2, w2z(o.y));
+          pole.castShadow = true;
+          decalGroup.add(pole);
+          if (o.tall) {
+            const head = new THREE.Mesh(
+              new THREE.SphereGeometry(0.16, 8, 8),
+              new THREE.MeshStandardMaterial({
+                color: '#fef3c7', emissive: '#fde68a', emissiveIntensity: sim.night ? 2.2 : 0.15
+              })
+            );
+            head.position.set(w2x(o.x), y + h + 0.1, w2z(o.y));
+            decalGroup.add(head);
+          }
+        } else if (o.kind === 'building') {
+          // blocky structure: walls + flat roof + lit windows at night
+          const bw = o.r * 1.7;
+          const bh = o.r * (1.1 + ((o.id * 13) % 10) / 10 * 0.9);
+          const walls = new THREE.Mesh(
+            new THREE.BoxGeometry(bw, bh, bw * 0.8),
+            new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.08 + ((o.id * 7) % 10) / 10 * 0.06, 0.25, 0.42), roughness: 0.9 })
+          );
+          walls.rotation.y = (o.id * 0.7) % (Math.PI / 2);
+          walls.position.set(w2x(o.x), y + bh / 2, w2z(o.y));
+          walls.castShadow = true;
+          walls.receiveShadow = true;
+          decalGroup.add(walls);
+          const roof = new THREE.Mesh(
+            new THREE.BoxGeometry(bw * 1.06, 0.18, bw * 0.86),
+            new THREE.MeshStandardMaterial({ color: '#44403c', roughness: 0.9 })
+          );
+          roof.rotation.y = walls.rotation.y;
+          roof.position.set(w2x(o.x), y + bh + 0.09, w2z(o.y));
+          decalGroup.add(roof);
+          if (sim.night) {
+            const win = new THREE.Mesh(
+              new THREE.PlaneGeometry(bw * 0.7, bh * 0.3),
+              new THREE.MeshBasicMaterial({ color: '#fde68a', transparent: true, opacity: 0.85 })
+            );
+            win.rotation.y = walls.rotation.y;
+            const off = new THREE.Vector3(Math.sin(walls.rotation.y), 0, Math.cos(walls.rotation.y));
+            win.position.set(w2x(o.x) + off.x * (bw * 0.41), y + bh * 0.55, w2z(o.y) + off.z * (bw * 0.41));
+            decalGroup.add(win);
+          }
         } else if (o.kind === 'smoke') {
           for (let k = 0; k < 3; k++) {
             const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, opacity: 0.5, depthWrite: false }));
@@ -529,6 +725,291 @@ export default function SimulationCanvas() {
       }
     };
 
+    // ---------- RGB-D survey projection (pit / pothole measuring grid) ----------
+    const surveyGroup = new THREE.Group();
+    scene.add(surveyGroup);
+    const surveyGrid = new THREE.GridHelper(2, 6, '#22d3ee', '#22d3ee');
+    (surveyGrid.material as THREE.LineBasicMaterial).transparent = true;
+    (surveyGrid.material as THREE.LineBasicMaterial).opacity = 0.85;
+    surveyGrid.visible = false;
+    const surveySweep = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.02, 0.08),
+      new THREE.MeshBasicMaterial({ color: '#22d3ee', transparent: true, opacity: 0.9 })
+    );
+    surveySweep.visible = false;
+    const holdRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.94, 1.0, 48),
+      new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+    );
+    holdRing.rotation.x = -Math.PI / 2;
+    holdRing.visible = false;
+    const verdictRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.9, 1.04, 48),
+      new THREE.MeshBasicMaterial({ color: '#22c55e', transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+    );
+    verdictRing.rotation.x = -Math.PI / 2;
+    verdictRing.visible = false;
+    surveyGroup.add(surveyGrid, surveySweep, holdRing, verdictRing);
+
+    const updateSurveyViz = (t: number) => {
+      const sv = sim.survey;
+      const fl = sim.surveyFlash;
+      const showFlash = fl && t < fl.until;
+      // measuring grid + sweep while projecting/measuring
+      if (sv && (sv.phase === 'project' || sv.phase === 'measure')) {
+        const e = t - sv.t0;
+        const dia = sv.r * 2 + 1;
+        const gy = activeTerrain.elevAt(sv.x, sv.y);
+        surveyGrid.visible = true;
+        surveyGrid.position.set(w2x(sv.x), gy + 0.12, w2z(sv.y));
+        surveyGrid.scale.setScalar(Math.max(0.01, dia / 2));
+        (surveyGrid.material as THREE.LineBasicMaterial).opacity = sv.phase === 'project'
+          ? 0.3 + 0.55 * Math.min(1, e / 1.0)
+          : 0.85;
+        surveySweep.visible = sv.phase === 'measure';
+        if (sv.phase === 'measure') {
+          const k = ((e - 1.0) / 1.2) % 1;
+          surveySweep.scale.set(dia, 1, 1);
+          surveySweep.position.set(
+            w2x(sv.x) + (k - 0.5) * dia,
+            gy + 0.14,
+            w2z(sv.y)
+          );
+        }
+      } else {
+        surveyGrid.visible = false;
+        surveySweep.visible = false;
+      }
+      // 0.3 m hold ring while approaching or surveying
+      const holdId = sv ? sv.id : sim.pitTargetId >= 0 ? sim.pitTargetId : -1;
+      const hold = holdId >= 0 ? sim.obstacles.find((o) => o.id === holdId) ?? null : null;
+      if (hold) {
+        const hy = activeTerrain.elevAt(hold.x, hold.y);
+        holdRing.visible = true;
+        holdRing.position.set(w2x(hold.x), hy + 0.1, w2z(hold.y));
+        holdRing.scale.setScalar(hold.r + SURVEY_HOLD);
+      } else {
+        holdRing.visible = false;
+      }
+      // verdict flash ring (green = straddle, red = reroute)
+      if (showFlash && fl) {
+        const fy = activeTerrain.elevAt(fl.x, fl.y);
+        verdictRing.visible = true;
+        verdictRing.position.set(w2x(fl.x), fy + 0.12, w2z(fl.y));
+        const pulse = 1 + ((t * 1.2) % 1) * 0.25;
+        verdictRing.scale.setScalar(fl.r * pulse + 0.15);
+        (verdictRing.material as THREE.MeshBasicMaterial).color.set(fl.pass ? '#22c55e' : '#DC2626');
+        (verdictRing.material as THREE.MeshBasicMaterial).opacity = 0.9 - ((t * 1.2) % 1) * 0.4;
+      } else {
+        verdictRing.visible = false;
+      }
+    };
+
+    // ---------- road network (avenues, roundabout, markings; rebuilt per preset) ----------
+    const roadsGroup = new THREE.Group();
+    scene.add(roadsGroup);
+    const makeDashTexture = () => {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 8;
+      const g = c.getContext('2d')!;
+      g.clearRect(0, 0, 64, 8);
+      g.fillStyle = 'rgba(255,255,255,0.92)';
+      g.fillRect(8, 2, 32, 4);
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.repeat.set(24, 1);
+      return tex;
+    };
+    const dashTex = makeDashTexture();
+    const syncRoads = () => {
+      for (const child of [...roadsGroup.children]) {
+        roadsGroup.remove(child);
+        const mesh = child as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const mat = mesh.material as THREE.Material | undefined;
+        if (mat) mat.dispose();
+      }
+      const preset = activeTerrain.preset;
+      const strips = preset.roads ?? [];
+      if (!strips.length && !preset.roundabout) return;
+      const roadMat = new THREE.MeshStandardMaterial({ color: '#2e2e33', roughness: 0.95 });
+      const lineMat = new THREE.MeshBasicMaterial({ map: dashTex, transparent: true, depthWrite: false });
+      const paintMat = new THREE.MeshBasicMaterial({ color: '#f5f5f4', transparent: true, opacity: 0.9 });
+      const addFlat = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, lift: number) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.rotation.x = -Math.PI / 2;
+        m.position.set(w2x(x), activeTerrain.elevAt(x, y) + lift, w2z(y));
+        m.receiveShadow = true;
+        roadsGroup.add(m);
+        return m;
+      };
+      for (const s of strips) {
+        const len = s.axis === 'x' ? WORLD_W : WORLD_H;
+        const cx = s.axis === 'x' ? 0 : s.at;
+        const cy = s.axis === 'x' ? s.at : 0;
+        addFlat(new THREE.PlaneGeometry(s.axis === 'x' ? len : s.w, s.axis === 'x' ? s.w : len), roadMat, cx, cy, 0.03);
+        if (s.soil === 'asphalt') {
+          // center dashes
+          const dashes = addFlat(new THREE.PlaneGeometry(len, 0.18), lineMat, cx, cy, 0.05);
+          dashes.material = lineMat;
+          // edge lines
+          for (const e of [-1, 1]) {
+            const ex = s.axis === 'x' ? cx : cx + e * (s.w / 2 - 0.35);
+            const ey = s.axis === 'x' ? cy + e * (s.w / 2 - 0.35) : cy;
+            addFlat(new THREE.PlaneGeometry(s.axis === 'x' ? len : 0.14, s.axis === 'x' ? 0.14 : len), paintMat, ex, ey, 0.05);
+          }
+        }
+      }
+      const rb = preset.roundabout;
+      if (rb) {
+        addFlat(new THREE.RingGeometry(rb.r - rb.w / 2, rb.r + rb.w / 2, 48), roadMat, rb.x, rb.y, 0.03);
+        addFlat(new THREE.CircleGeometry(rb.r - rb.w / 2, 32), new THREE.MeshStandardMaterial({ color: '#4a4f35', roughness: 1 }), rb.x, rb.y, 0.04);
+      }
+      // zebra crossings + stop line at the main intersection
+      if (preset.id === 'urban') {
+        for (const zx of [-11.5, -4.5]) {
+          for (let k = 0; k < 5; k++) {
+            addFlat(new THREE.PlaneGeometry(0.6, 3.4), paintMat, zx, -3.4 + k * 1.7, 0.05);
+          }
+        }
+        addFlat(new THREE.PlaneGeometry(0.5, 7), paintMat, -12.5, 0, 0.05);
+      }
+    };
+    syncRoads();
+
+    // ---------- live traffic meshes (persistent per mover, posed every frame) ----------
+    const moversGroup = new THREE.Group();
+    scene.add(moversGroup);
+    const moverMeshes = new Map<number, THREE.Group>();
+    const moverColor = (seed: number, s: number, l: number) =>
+      new THREE.Color().setHSL(((seed * 0.37) % 1 + 1) % 1, s, l);
+    const box = (w: number, h: number, d: number, color: THREE.Color | string, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.3 })
+      );
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      return m;
+    };
+    const buildMoverMesh = (kind: string, r: number, seed: number): THREE.Group => {
+      const g = new THREE.Group();
+      if (kind === 'car') {
+        g.add(box(r * 2.0, r * 0.5, r * 0.95, moverColor(seed, 0.45, 0.42), 0, r * 0.45, 0));
+        g.add(box(r * 1.0, r * 0.42, r * 0.8, '#1c1917', -r * 0.1, r * 0.85, 0));
+      } else if (kind === 'moto') {
+        g.add(box(1.1, 0.35, 0.4, moverColor(seed, 0.5, 0.35), 0, 0.45, 0));
+        g.add(box(0.35, 0.6, 0.35, '#eab308', -0.1, 1.0, 0));
+      } else if (kind === 'ped') {
+        const cloth = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.2, 0.24, 1.05, 8),
+          new THREE.MeshStandardMaterial({ color: moverColor(seed, 0.7, 0.5), roughness: 0.9 })
+        );
+        cloth.position.y = 0.85;
+        cloth.castShadow = true;
+        g.add(cloth);
+        const head = new THREE.Mesh(
+          new THREE.SphereGeometry(0.16, 10, 10),
+          new THREE.MeshStandardMaterial({ color: '#d4a373', roughness: 0.8 })
+        );
+        head.position.y = 1.55;
+        g.add(head);
+      } else if (kind === 'tractor') {
+        g.add(box(r * 1.5, r * 0.5, r * 0.9, '#166534', 0, r * 0.55, 0));
+        g.add(box(r * 0.55, r * 0.55, r * 0.7, '#14532d', -r * 0.2, r * 1.05, 0));
+        const wg = new THREE.CylinderGeometry(r * 0.32, r * 0.32, 0.25, 12);
+        wg.rotateX(Math.PI / 2);
+        const wm = new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.95 });
+        for (const [wx, wz] of [[r * 0.55, r * 0.5], [r * 0.55, -r * 0.5], [-r * 0.55, r * 0.5], [-r * 0.55, -r * 0.5]] as const) {
+          const wheel = new THREE.Mesh(wg, wm);
+          wheel.position.set(wx, r * 0.32, wz);
+          wheel.castShadow = true;
+          g.add(wheel);
+        }
+      } else {
+        // animal: low body + head (cow/goat blob)
+        g.add(box(r * 1.6, r * 0.8, r * 0.8, new THREE.Color().setHSL(0.08, 0.25, 0.3 + ((seed * 7) % 10) / 10 * 0.2), 0, r * 0.7, 0));
+        g.add(box(r * 0.45, r * 0.45, r * 0.45, '#292524', r * 0.9, r * 1.0, 0));
+      }
+      return g;
+    };
+    const syncMovers = () => {
+      const seen = new Set<number>();
+      for (const m of sim.movers) {
+        seen.add(m.mid);
+        let g = moverMeshes.get(m.mid);
+        if (!g) {
+          g = buildMoverMesh(m.oKind, m.r, m.seed);
+          moversGroup.add(g);
+          moverMeshes.set(m.mid, g);
+        }
+        g.position.set(w2x(m.x), activeTerrain.elevAt(m.x, m.y) + 0.05, w2z(m.y));
+        g.rotation.y = m.theta;
+      }
+      for (const [mid, g] of [...moverMeshes]) {
+        if (!seen.has(mid)) {
+          moversGroup.remove(g);
+          g.traverse((obj) => {
+            const mesh = obj as THREE.Mesh;
+            if (mesh.geometry) mesh.geometry.dispose();
+            const mat = mesh.material as THREE.Material | undefined;
+            if (mat) mat.dispose();
+          });
+          moverMeshes.delete(mid);
+        }
+      }
+    };
+
+    // ---------- traffic-signal heads (rebuilt per preset, lamps live) ----------
+    const signalGroup = new THREE.Group();
+    scene.add(signalGroup);
+    let signalLamps: Array<{ r: THREE.MeshStandardMaterial; y: THREE.MeshStandardMaterial; g: THREE.MeshStandardMaterial; sig: { state: string } }> = [];
+    const syncSignals = () => {
+      for (const child of [...signalGroup.children]) {
+        signalGroup.remove(child);
+        child.traverse((obj) => {
+          const mesh = obj as THREE.Mesh;
+          if (mesh.geometry) mesh.geometry.dispose();
+          const mat = mesh.material as THREE.Material | undefined;
+          if (mat) mat.dispose();
+        });
+      }
+      signalLamps = [];
+      for (const s of sim.signals) {
+        const gy = activeTerrain.elevAt(s.x, s.y);
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.09, 0.11, 4.6, 8),
+          new THREE.MeshStandardMaterial({ color: '#44403c', roughness: 0.8 })
+        );
+        pole.position.set(w2x(s.x), gy + 2.3, w2z(s.y));
+        pole.castShadow = true;
+        signalGroup.add(pole);
+        const headM = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 1.3, 0.35),
+          new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.7 })
+        );
+        headM.position.set(w2x(s.x), gy + 4.9, w2z(s.y));
+        signalGroup.add(headM);
+        const mk = (dy: number, color: string) => {
+          const mat = new THREE.MeshStandardMaterial({ color: '#111111', emissive: color, emissiveIntensity: 0.1 });
+          const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 10), mat);
+          lamp.position.set(w2x(s.x), gy + 4.9 + dy, w2z(s.y) + 0.19);
+          signalGroup.add(lamp);
+          return mat;
+        };
+        signalLamps.push({ r: mk(0.4, '#ef4444'), y: mk(0, '#f59e0b'), g: mk(-0.4, '#22c55e'), sig: s });
+      }
+    };
+    syncSignals();
+    const updateSignalLamps = () => {
+      for (const l of signalLamps) {
+        l.r.emissiveIntensity = l.sig.state === 'R' ? 2.4 : 0.1;
+        l.y.emissiveIntensity = l.sig.state === 'Y' ? 2.4 : 0.1;
+        l.g.emissiveIntensity = l.sig.state === 'G' ? 2.4 : 0.1;
+      }
+    };
+
     // ---------- UGV ----------
     const ugv = new THREE.Group();
     ugv.rotation.order = 'YXZ';
@@ -536,10 +1017,13 @@ export default function SimulationCanvas() {
     const olive = new THREE.MeshStandardMaterial({ color: '#4a4f35', roughness: 0.72, metalness: 0.25 });
     const oliveDark = new THREE.MeshStandardMaterial({ color: '#33361f', roughness: 0.8, metalness: 0.2 });
     const steel = new THREE.MeshStandardMaterial({ color: '#2a2d24', roughness: 0.6, metalness: 0.5 });
+    // sprung mass: hull leans into turns and dives under braking, wheels stay planted
+    const lean = new THREE.Group();
+    ugv.add(lean);
     const castAll = (m: THREE.Mesh) => {
       m.castShadow = true;
       m.receiveShadow = true;
-      ugv.add(m);
+      lean.add(m);
       return m;
     };
     const lowerHull = castAll(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.32, 1.05), olive));
@@ -578,7 +1062,7 @@ export default function SimulationCanvas() {
     for (const lz of [0.16, -0.16]) {
       const lens = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), lensMat);
       lens.position.set(-0.28, 1.5, lz);
-      ugv.add(lens);
+      lean.add(lens);
     }
     const puck = new THREE.Mesh(
       new THREE.BoxGeometry(0.22, 0.1, 0.12),
@@ -589,13 +1073,13 @@ export default function SimulationCanvas() {
     const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.02, 1.4, 6), steel);
     whip.position.set(-0.62, 1.6, -0.35);
     whip.rotation.z = 0.06;
-    ugv.add(whip);
+    lean.add(whip);
     const beaconTip = new THREE.Mesh(
       new THREE.SphereGeometry(0.035, 8, 8),
       new THREE.MeshStandardMaterial({ color: '#7f1d1d', emissive: '#ef4444', emissiveIntensity: 1.6 })
     );
     beaconTip.position.set(-0.66, 2.32, -0.35);
-    ugv.add(beaconTip);
+    lean.add(beaconTip);
     // wheels: oversized off-road tires, steel hubs, steered front axle
     const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.3, 16);
     wheelGeo.rotateX(Math.PI / 2);
@@ -608,6 +1092,7 @@ export default function SimulationCanvas() {
     const wheels: THREE.Mesh[] = [];
     const steerGroups: THREE.Group[] = [];
     const steerState = { prev: 0, cur: 0 };
+    const leanState = { prevV: 0, acc: 0 };
     [[0.52, 0.62, true], [0.52, -0.62, true], [-0.52, 0.62, false], [-0.52, -0.62, false]].forEach(([wx, wz, steer]) => {
       const g = new THREE.Group();
       g.position.set(wx as number, 0.34, wz as number);
@@ -632,14 +1117,14 @@ export default function SimulationCanvas() {
     lampL.position.set(0.72, 0.62, 0.28);
     const lampR = lampL.clone();
     lampR.position.z = -0.28;
-    ugv.add(lampL, lampR);
+    lean.add(lampL, lampR);
     const beam = new THREE.Mesh(
       new THREE.ConeGeometry(1.7, 7.5, 16, 1, true),
       new THREE.MeshBasicMaterial({ color: '#ffedb0', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
     );
     beam.rotation.z = Math.PI / 2 - 0.09;
     beam.position.set(4.4, 0.1, 0);
-    ugv.add(beam);
+    lean.add(beam);
     const head = new THREE.SpotLight('#fff2cc', 0, 48, 0.5, 0.55, 1.1);
     head.position.set(0.7, 0.9, 0);
     const headTarget = new THREE.Object3D();
@@ -703,6 +1188,18 @@ export default function SimulationCanvas() {
       r.visible = false;
       scene.add(r);
       alertPool.push(r);
+    }
+    // clearance rings: exact guaranteed gap around nearby hard blockers (r + clearance)
+    const clearPool: THREE.Mesh[] = [];
+    for (let i = 0; i < 12; i++) {
+      const r = new THREE.Mesh(
+        new THREE.RingGeometry(0.94, 1.0, 48),
+        new THREE.MeshBasicMaterial({ color: '#B45309', transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+      );
+      r.rotation.x = -Math.PI / 2;
+      r.visible = false;
+      scene.add(r);
+      clearPool.push(r);
     }
 
     const beacon = new THREE.Group();
@@ -772,11 +1269,12 @@ export default function SimulationCanvas() {
           camGoal.dist = 12;
           camLook.goal = 4;
         } else if (m === 'follow') {
-          // sensor-eye: ride just behind the LiDAR mast, stare down the path
-          camGoal.yawOff = cam.yawOff + wrapAngle(0 - cam.yawOff);
-          camGoal.pitch = 0.12;
-          camGoal.dist = 2.4;
-          camLook.goal = 16;
+          // front-driver view: same spot ahead of the nose, but staring
+          // forward down the path — you see what the UGV is about to meet
+          camGoal.yawOff = cam.yawOff + wrapAngle(Math.PI - cam.yawOff);
+          camGoal.pitch = 0.14;
+          camGoal.dist = 3.2;
+          camLook.goal = 9;
         } else {
           camGoal.yawOff = cam.yawOff + wrapAngle(0 - cam.yawOff);
           camGoal.pitch = 1.35;
@@ -824,9 +1322,10 @@ export default function SimulationCanvas() {
         if (terrainMesh) {
           const hit = raycaster.intersectObject(terrainMesh, false)[0];
           if (hit) {
+            if (sim.locked) return; // configuring the place: map clicks frozen
             const wx = clamp(hit.point.x, -WORLD_W / 2 + 1, WORLD_W / 2 - 1);
             const wy = clamp(-hit.point.z, -WORLD_H / 2 + 1, WORLD_H / 2 - 1);
-            if (e.button === 2) sim.setGoal(wx, wy);
+            if (e.button === 2) sim.setGoal(wx, wy, e.shiftKey);
             else sim.addObstacle(sim.tool, wx, wy);
           }
         }
@@ -897,6 +1396,8 @@ export default function SimulationCanvas() {
         lastPreset = sim.preset.id;
         buildTerrain();
         buildBackgroundForest();
+        syncRoads();
+        syncSignals();
       }
       if (sim.version !== lastVersion) {
         lastVersion = sim.version;
@@ -932,12 +1433,18 @@ export default function SimulationCanvas() {
       const steerTarget = clamp(yawRate * 0.35, -0.5, 0.5);
       steerState.cur += (steerTarget - steerState.cur) * Math.min(1, dt * 6);
       for (const g of steerGroups) g.rotation.y = steerState.cur;
+      // sprung-mass language: lean out of turns, dive under braking
+      const accEst = (sim.actV - leanState.prevV) / Math.max(dt, 1e-3);
+      leanState.prevV = sim.actV;
+      leanState.acc += (clamp(accEst, -6, 4) - leanState.acc) * Math.min(1, dt * 4);
+      lean.rotation.z = clamp(leanState.acc * 0.02, -0.07, 0.07);
+      lean.rotation.x = steerState.cur * 0.1;
       puck.rotation.y += dt * 7;
 
       sun.position.set(rx + 28, 42, rz + 18);
       sun.target.position.set(rx, 0, rz);
 
-      const { paths, best } = mppiRollouts(pose.x, pose.y, pose.theta, sim.actV, params.friction, obstacles, t, snr, sim.caution);
+      const { paths, best } = mppiRollouts(pose.x, pose.y, pose.theta, sim.actV, params.friction, obstacles, t, snr, sim.caution, sim.planMargin());
       const costs = paths.map((p) => p.cost).sort((a, b) => a - b);
       const cmax = costs[Math.floor(costs.length * 0.9)] || 1;
       paths.forEach((p, i) => {
@@ -991,11 +1498,14 @@ export default function SimulationCanvas() {
       bubbleRing.position.set(rx, groundY + 0.1, rz);
       bubbleRing.scale.setScalar(Math.max(0.2, sim.params.bubble));
       (bubbleRing.material as THREE.MeshBasicMaterial).color.set(sim.override ? '#f43f5e' : sim.caution ? '#f59e0b' : '#1B5E43');
+      updateSurveyViz(t);
+      syncMovers();
+      updateSignalLamps();
 
       let ai = 0;
       for (const o of obstacles) {
         if (ai >= alertPool.length) break;
-        if (!HARD_KINDS.includes(o.kind)) continue;
+        if (!isSolidObstacle(o)) continue;
         const edge = Math.hypot(o.x - pose.x, o.y - pose.y) - o.r;
         if (edge > 3.5) continue;
         const ring = alertPool[ai++];
@@ -1008,6 +1518,20 @@ export default function SimulationCanvas() {
         rm.opacity = 0.9 - ((t * 1.4 + o.id) % 1) * 0.5;
       }
       for (; ai < alertPool.length; ai++) alertPool[ai].visible = false;
+
+      // clearance rings on hard blockers within 15 m: pass line is r + clearance
+      let ci2 = 0;
+      for (const o of obstacles) {
+        if (ci2 >= clearPool.length) break;
+        if (!isSolidObstacle(o)) continue;
+        const od = Math.hypot(o.x - pose.x, o.y - pose.y);
+        if (od > 15) continue;
+        const ring = clearPool[ci2++];
+        ring.visible = true;
+        ring.position.set(w2x(o.x), activeTerrain.elevAt(o.x, o.y) + 0.14, w2z(o.y));
+        ring.scale.setScalar(o.r + sim.params.clearance);
+      }
+      for (; ci2 < clearPool.length; ci2++) clearPool[ci2].visible = false;
 
       // goal beacon + global route ribbon
       if (sim.goal) {
@@ -1062,7 +1586,7 @@ export default function SimulationCanvas() {
         groundY + cam.dist * Math.sin(cam.pitch) + 1.2,
         rz + fwd.z * cam.dist * Math.cos(cam.pitch)
       );
-      camPos.lerp(desired, 1 - Math.exp(-dt * 4.5));
+      camPos.lerp(desired, 1 - Math.exp(-dt * 3.0));
       camera.position.copy(camPos);
       look.set(rx + Math.cos(pose.theta) * camLook.v, groundY + 1.2, rz - Math.sin(pose.theta) * camLook.v);
       camera.lookAt(look);
@@ -1117,7 +1641,7 @@ export default function SimulationCanvas() {
         </h2>
         <div className="flex items-center gap-2">
           <span className="font-sans text-[11px] text-stone-500 hidden sm:inline-flex items-center gap-1.5">
-            <MousePointerClick size={12} /> Left-click drops {view.tool.toUpperCase()} · right-click sets goal · drag to orbit
+            <MousePointerClick size={12} /> Left-click drops {view.tool.toUpperCase()} · right-click goals · shift-click queues
           </span>
           <button onClick={() => sim.clearObstacles()} className="tactical-btn !py-1 !text-[11px]" title="Clear hazards">
             <Trash2 size={12} /> CLEAR
@@ -1171,10 +1695,10 @@ export default function SimulationCanvas() {
             onPointerUp={(e) => {
               const d = mapDrag.current;
               mapDrag.current = null;
-              if (!d || d.moved) return;
+              if (!d || d.moved || sim.locked) return;
               const p = mapPoint(e);
               const g = clampGoal(p.wx, p.wy);
-              sim.setGoal(g.x, g.y);
+              sim.setGoal(g.x, g.y, e.shiftKey);
             }}
             onPointerLeave={() => {
               setCursor('');
@@ -1215,6 +1739,13 @@ export default function SimulationCanvas() {
         {view.caution && !view.override && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-400 text-stone-900 font-sans text-xs font-bold px-4 py-1.5 rounded-lg tracking-wide shadow-lift">
             Caution · bubble {view.params.bubble.toFixed(1)} m breached — derated, replanning
+          </div>
+        )}
+        {view.locked && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-stone-900 text-white font-sans text-xs font-bold px-4 py-1.5 rounded-lg tracking-[0.18em] shadow-lift">
+            {view.deployPhase === 'scan'
+              ? 'SCANNING ENVIRONMENT · 360° sweep'
+              : `UGV IS CONFIGURING THE PLACE · ${view.deployOdom.toFixed(1)}/${view.deployTarget.toFixed(0)}m · ${view.dataset.length} novel`}
           </div>
         )}
         {view.latest.snrDegraded && !view.override && (
@@ -1288,7 +1819,7 @@ export default function SimulationCanvas() {
                 onPointerUp={(e) => {
                   const d = modalDrag.current;
                   modalDrag.current = null;
-                  if (!d || d.moved) return;
+                  if (!d || d.moved || sim.locked) return;
                   const rect = modalMapRef.current!.getBoundingClientRect();
                   const v = modalView.current;
                   const s = rect.width / v.vw;
@@ -1296,9 +1827,10 @@ export default function SimulationCanvas() {
                   const wy = v.cy + (e.clientY - rect.top - rect.height / 2) / s;
                   sim.setGoal(
                     Math.max(-WORLD_W / 2 + 1, Math.min(WORLD_W / 2 - 1, wx)),
-                    Math.max(-WORLD_H / 2 + 1, Math.min(WORLD_H / 2 - 1, wy))
+                    Math.max(-WORLD_H / 2 + 1, Math.min(WORLD_H / 2 - 1, wy)),
+                    e.shiftKey
                   );
-                  setMapOpen(false);
+                  if (!e.shiftKey) setMapOpen(false);
                 }}
                 onPointerLeave={() => {
                   setModalCursor('');
@@ -1326,8 +1858,8 @@ function HudInner() {
       <div className="font-mono text-stone-800">x:{pose.x.toFixed(1)} y:{pose.y.toFixed(1)} θ:{((pose.theta * 180) / Math.PI).toFixed(0)}° · v:{sim.actV.toFixed(2)} m/s</div>
       <div className="font-semibold text-clay-700">TERR {soil.label} · μ{mu.toFixed(2)} · z{elev >= 0 ? '+' : ''}{elev.toFixed(1)} m · bubble {sim.params.bubble.toFixed(1)} m</div>
       <div className={`font-semibold ${sim.override ? 'text-signal' : sim.caution ? 'text-clay-700' : 'text-pine-700'}`}>
-        {sim.override ? 'Layer-0 override · braking' : sim.caution ? 'Caution · derated to 0.9 m/s' : 'Shield nominal'}
-        <span className="text-stone-400 font-medium"> · {sim.latest.snrDegraded ? 'nav Layer-0 only' : 'nav Layer-0 + Layer-1'}</span>
+        {sim.override ? 'Layer-0 override · braking' : sim.caution ? 'Caution · derated' : 'Shield nominal'}
+        <span className="text-stone-400 font-medium"> · CLR {sim.latest.margin > 20 ? '—' : `${Math.max(0, sim.latest.margin - 0.7).toFixed(2)}m gap`}</span>
       </div>
       <div className="text-stone-600 truncate max-w-[320px]" title={sim.replanMsg}>
         {sim.goal

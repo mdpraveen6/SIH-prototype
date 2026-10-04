@@ -1,11 +1,29 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  CloudFog, Crosshair, Droplets, Flame, Grid3X3, Map, Mountain, Orbit,
-  Sprout, Sun, TreePine, Waves, Zap
+  Circle, CircleDot, CloudFog, Cone, Crosshair, Disc, Droplets, Flame, Grid3X3, Home, Map, Mountain, Orbit,
+  Package, Repeat, Navigation, Rocket, Sprout, Sun, TreePine, Waves, Zap
 } from 'lucide-react';
 import { PRESETS } from '../sim/terrain';
-import { ObstacleKind, useSimView } from '../sim/store';
+import { ObstacleKind, useSimView, type SparshSim } from '../sim/store';
+
+function missionRemaining(sim: SparshSim): number {
+  if (!sim.goal) return 0;
+  let d = Math.hypot(sim.goal.x - sim.pose.x, sim.goal.y - sim.pose.y);
+  let px = sim.goal.x;
+  let py = sim.goal.y;
+  for (const q of sim.queue) {
+    d += Math.hypot(q.x - px, q.y - py);
+    px = q.x;
+    py = q.y;
+  }
+  return d;
+}
+
+function missionEta(sim: SparshSim): number {
+  const v = sim.actV > 0.3 ? sim.actV : sim.params.velocity;
+  return Math.round(missionRemaining(sim) / Math.max(0.8, v));
+}
 
 const TOOLS: { id: ObstacleKind; label: string; icon: React.ReactNode }[] = [
   { id: 'boulder', label: 'Boulder', icon: <Mountain size={15} /> },
@@ -14,7 +32,12 @@ const TOOLS: { id: ObstacleKind; label: string; icon: React.ReactNode }[] = [
   { id: 'water', label: 'Water', icon: <Droplets size={15} /> },
   { id: 'sand', label: 'Sand', icon: <Sun size={15} /> },
   { id: 'bush', label: 'Bush', icon: <Sprout size={15} /> },
-  { id: 'smoke', label: 'Smoke', icon: <CloudFog size={15} /> }
+  { id: 'smoke', label: 'Smoke', icon: <CloudFog size={15} /> },
+  { id: 'cone', label: 'Cone', icon: <Cone size={15} /> },
+  { id: 'barrel', label: 'Barrel', icon: <Package size={15} /> },
+  { id: 'pit_small', label: 'Pit-S', icon: <Circle size={15} /> },
+  { id: 'pit_large', label: 'Pit-L', icon: <CircleDot size={15} /> },
+  { id: 'pothole', label: 'Pothole', icon: <Disc size={15} /> }
 ];
 
 function Slider({ label, value, min, max, step, unit, onChange, hint, warn }: {
@@ -90,6 +113,7 @@ export default function ControlConsole() {
         </div>
       </div>
 
+      <div className={sim.locked ? 'pointer-events-none opacity-60 select-none' : ''}>
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-[1fr_1.35fr_1fr_0.9fr] gap-3">
         <Zone icon={<Map size={12} />} title="Terrain">
           <div className="grid grid-cols-2 gap-1.5">
@@ -157,7 +181,15 @@ export default function ControlConsole() {
                 sim.setParams({ bubble: v });
                 if (sim.goal && !sim.arrived) sim.replan('bubble resized');
               }}
-              hint="Guaranteed-clear ring — planner + shield enforce it"
+              hint="Early-detection ring — caution + replan trigger"
+            />
+            <Slider
+              label="Clearance gap" value={p.clearance} min={0.3} max={2} step={0.1} unit=" m"
+              onChange={(v) => {
+                sim.setParams({ clearance: v });
+                if (sim.goal && !sim.arrived) sim.replan('clearance changed');
+              }}
+              hint="Body gap to rock — e.g. 2.5m rock → 3.0m pass line"
             />
           </div>
         </Zone>
@@ -178,7 +210,7 @@ export default function ControlConsole() {
                 {t.icon} {t.label}
               </button>
             ))}
-            <div className="col-span-4 font-sans text-[10px] text-stone-400 leading-tight">
+            <div className="col-span-full font-sans text-[10px] text-stone-400 leading-tight">
               Selected: <span className="font-semibold text-pine-700">{TOOLS.find((t) => t.id === sim.tool)?.label}</span> — drops where you click the 3D view
             </div>
           </div>
@@ -200,6 +232,68 @@ export default function ControlConsole() {
             </button>
           </div>
         </Zone>
+      </div>
+      </div>
+
+      <div className="rounded-xl border border-stone-200/90 bg-stone-50/70 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="section-label flex items-center gap-1.5">
+            <Navigation size={12} /> Mission
+            {sim.goal && !sim.arrived && (
+              <span className="font-mono text-[10px] text-pine-700 normal-case tracking-normal">
+                leg {sim.legsDone + 1}/{sim.legsDone + 1 + sim.queue.length} · {missionRemaining(sim).toFixed(0)}m to go · ETA ~{missionEta(sim)}s
+              </span>
+            )}
+            {sim.loopMission && <span className="font-sans text-[10px] font-bold text-pine-700">· loop ×{sim.loopsDone}</span>}
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => sim.deploy()}
+              disabled={sim.locked}
+              className={`tactical-btn !text-[11px] !py-1 !border-pine-700 !bg-pine-700 !text-white ${sim.locked ? 'opacity-40' : ''}`}
+              title="Deploy: lock UI, explore 50 m randomly, learn novel obstacles, classify the land"
+            >
+              <Rocket size={12} /> {sim.locked ? (sim.deployPhase === 'scan' ? 'Scanning…' : 'Travel-scan…') : 'Scan environment'}
+            </button>
+            <button onClick={() => sim.toggleLoop()} disabled={sim.locked} className={`tactical-btn !text-[11px] !py-1 ${sim.loopMission ? '!border-pine-700 !text-pine-700 !bg-pine-50' : ''} ${sim.locked ? 'opacity-40' : ''}`} title="Auto-generated patrol loop">
+              <Repeat size={12} /> Patrol {sim.loopMission ? 'on' : 'off'}
+            </button>
+            <button onClick={() => sim.returnToStart()} disabled={sim.locked} className={`tactical-btn !text-[11px] !py-1 ${sim.locked ? 'opacity-40' : ''}`} title="Navigate back to start">
+              <Home size={12} /> Return
+            </button>
+            {sim.goal && (
+              <button onClick={() => sim.clearGoal()} disabled={sim.locked} className={`tactical-btn !text-[11px] !py-1 ${sim.locked ? 'opacity-40' : ''}`} title="Clear mission">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+        {sim.locked && (
+          <div className="mt-2">
+            <div className="flex justify-between font-mono text-[10px] text-stone-600 mb-1">
+              <span>UGV IS CONFIGURING THE PLACE</span>
+              <span>{sim.deployOdom.toFixed(1)}/{sim.deployTarget.toFixed(0)}m · {sim.dataset.length} novel</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-stone-200 overflow-hidden">
+              <div className="h-full rounded-full bg-pine-700 transition-all duration-200" style={{ width: `${Math.min(100, (sim.deployOdom / sim.deployTarget) * 100)}%` }} />
+            </div>
+          </div>
+        )}
+        {(sim.goal || sim.queue.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {sim.goal && (
+              <span className="font-mono text-[10px] px-2 py-1 rounded-md bg-pine-700 text-white font-semibold" title="Current goal">
+                ➤ {sim.goal.x.toFixed(0)},{sim.goal.y.toFixed(0)}
+              </span>
+            )}
+            {sim.queue.map((q, i) => (
+              <span key={i} className="font-mono text-[10px] px-2 py-1 rounded-md border border-stone-300 bg-white text-stone-600" title={`Leg ${sim.legsDone + i + 2}`}>
+                {i + 2 + sim.legsDone - 1}· {q.x.toFixed(0)},{q.y.toFixed(0)}
+              </span>
+            ))}
+            <span className="font-sans text-[10px] text-stone-400">shift-click map to queue</span>
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg bg-stone-900 text-stone-100 px-3 py-2 font-mono text-[10px] leading-relaxed flex flex-wrap gap-x-4 gap-y-0.5">

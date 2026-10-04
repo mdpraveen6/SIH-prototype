@@ -2,6 +2,7 @@
 // Used by both the 3D viewport and the tactical minimap.
 import { Obstacle, ObstacleKind } from './store';
 import { activeTerrain, effMuAt } from './terrain';
+import { isSolidObstacle } from './hazards';
 
 export const MPPI_K = 56;
 export const TREE_CANOPY = 1.7;
@@ -36,18 +37,45 @@ export const MPPI_W: Record<ObstacleKind, [number, number]> = {
   mud: [1.3, 1.8],
   water: [1.6, 2.0],
   sand: [1.4, 1.7],
-  smoke: [0.35, 0.35]
+  smoke: [0.35, 0.35],
+  pit_small: [1.2, 1.5],
+  pit_large: [1.8, 2.2],
+  pothole: [1.8, 2.2],
+  barrel: [3.2, 4.4],
+  tirepile: [2.8, 3.6],
+  log: [3.0, 4.0],
+  drum: [3.2, 4.4],
+  cairn: [3.0, 4.0],
+  mound: [2.6, 3.4],
+  car_parked: [3.4, 4.6],
+  cone: [2.4, 3.0],
+  crop: [2.2, 2.8],
+  post: [2.6, 3.2],
+  building: [3.6, 4.8],
+  car: [3.4, 4.6],
+  moto: [2.8, 3.6],
+  ped: [3.6, 4.8],
+  tractor: [3.4, 4.6],
+  animal: [3.0, 4.0]
 };
 
 export function traversability(x: number, y: number, friction: number, obstacles: Obstacle[]): number {
   let tau = soilTau(x, y, friction);
-  for (const o of obstacles) {
+  // broad-phase: dense fields (crop rows) only test nearby obstacles
+  const list = obstacles.length > 150
+    ? obstacles.filter((o) => Math.abs(o.x - x) < 16 && Math.abs(o.y - y) < 16)
+    : obstacles;
+  for (const o of list) {
     const d = Math.hypot(o.x - x, o.y - y) - o.r - obstacleMargin(o) * 0.5;
-    if (o.kind === 'boulder' || o.kind === 'tree' || o.kind === 'bush') {
+    if (isSolidObstacle(o)) {
       if (d < 0.8) return 0;
       tau -= 0.5 * Math.exp(-(Math.max(0, d) ** 2) / 4);
-    } else if (o.kind === 'mud') {
+    } else if (o.kind === 'mud' || o.kind === 'pit_small') {
       tau -= 0.65 * Math.exp(-(d * d) / (o.r * o.r * 1.4));
+    } else if (o.kind === 'pit_large' || o.kind === 'pothole') {
+      tau -= 0.7 * Math.exp(-(d * d) / (o.r * o.r * 1.2));
+    } else if (o.kind === 'crop') {
+      tau -= 0.55 * Math.exp(-(d * d) / (o.r * o.r * 1.6));
     } else if (o.kind === 'water') {
       tau -= 0.7 * Math.exp(-(d * d) / (o.r * o.r * 1.2));
     } else if (o.kind === 'sand') {
@@ -77,19 +105,25 @@ export interface Rollout {
 }
 
 export function mppiRollouts(
-  px: number, py: number, th: number, v: number, friction: number, obstacles: Obstacle[], t: number, snr: boolean, caution = false
+  px: number, py: number, th: number, v: number, friction: number, obstacles: Obstacle[], t: number, snr: boolean, caution = false, clearMargin = 1.2
 ): { paths: Rollout[]; best: number; bestCost: number } {
   const speed = Math.max(v, 0.9);
   const H = 20;
   const dt = 0.16;
   const wOf = (kind: ObstacleKind): number => {
     const b = MPPI_W[kind][snr ? 1 : 0];
-    // early-detection boost: hard blockers inside the 1.5m caution zone repel harder
+    // early-detection boost: solid blockers inside the 1.5m caution zone repel harder
     return kind === 'boulder' || kind === 'tree' || kind === 'bush' ? b + (caution ? 1.8 : 0) : b;
   };
   const paths: Rollout[] = [];
+  // broad-phase once per call: rollouts only feel nearby geometry
+  const near = obstacles.length > 150
+    ? obstacles.filter((o) => Math.abs(o.x - px) < 18 && Math.abs(o.y - py) < 18)
+    : obstacles;
   for (let i = 0; i < MPPI_K; i++) {
-    const lane = (i / (MPPI_K - 1) - 0.5) * 13 + Math.sin(t * 0.5 + i * 2.3) * 0.9;
+    // fixed lateral lanes: NO time wobble — the old sin(t)*0.9 term made the
+    // "best" path jump every second even when the world was static
+    const lane = (i / (MPPI_K - 1) - 0.5) * 13;
     const wob = 0.35 + 0.65 * (((i * 7919) % 100) / 100);
     let x = px;
     let y = py;
@@ -108,10 +142,10 @@ export function mppiRollouts(
       x += Math.cos(h) * speed * dt;
       y += Math.sin(h) * speed * dt;
       pts.push({ x, y });
-      for (const o of obstacles) {
+      for (const o of near) {
         const m = obstacleMargin(o);
         const d = Math.hypot(o.x - x, o.y - y) - o.r - m;
-        if ((o.kind === 'boulder' || o.kind === 'tree' || o.kind === 'bush') && d < 0.9) {
+        if (isSolidObstacle(o) && d < clearMargin) {
           cost += 60; // hard collision — never pick a clipping rollout
         } else {
           cost += wOf(o.kind) * Math.exp(-(d * d) / 3.5);
@@ -128,9 +162,12 @@ export function mppiRollouts(
   return { paths, best, bestCost: paths[best].cost };
 }
 
-/** LiDAR interaction radius. null = ground-level, no return (mud / sand flats). */
+/** LiDAR interaction radius. null = ground-level, no return (mud / sand flats).
+ *  Pits and potholes are depressions — invisible to the 2D mast, the RGB-D
+ *  camera owns them (approach + survey). */
 export function lidarRadius(o: Obstacle): number | null {
   if (o.kind === 'mud' || o.kind === 'sand') return null;
+  if (o.kind === 'pit_small' || o.kind === 'pit_large' || o.kind === 'pothole') return null;
   if (o.kind === 'tree') return o.r + TREE_CANOPY;
   return o.r;
 }

@@ -97,6 +97,35 @@ export default function TelemetryPanel() {
         <span className="font-semibold text-stone-800">{L.soilLabel} · <span className="font-mono">μ{L.soilMu.toFixed(2)}</span></span>
       </div>
 
+      <div className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2">
+        <div className="flex justify-between items-baseline mb-1.5">
+          <span className="section-label flex items-center gap-1.5"><Shield size={12} /> Hull health</span>
+          <span className={`font-mono text-[11px] font-semibold ${L.health > 98 ? 'text-pine-700' : L.health > 90 ? 'text-amber-700' : 'text-signal'}`}>
+            {L.health.toFixed(1)}% · {L.contacts} touches
+          </span>
+        </div>
+        <Meter value={L.health} max={100} color={L.health > 98 ? '#1B5E43' : L.health > 90 ? '#B45309' : '#DC2626'} />
+        <div className="grid grid-cols-4 gap-1.5 mt-2 font-sans text-[10px]">
+          {[
+            ['Hull', L.compHull],
+            ['Wheels', L.compWheels],
+            ['Sensors', L.compSensors],
+            ['Battery', L.compBattery],
+          ].map(([name, v]) => (
+            <div key={name as string} className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: (v as number) >= 90 ? '#1B5E43' : (v as number) >= 70 ? '#B45309' : '#DC2626' }} />
+              <span className="text-stone-500">{name}</span>
+              <span className="font-mono text-stone-700">{(v as number).toFixed(0)}</span>
+            </div>
+          ))}
+        </div>
+        {sim.damageLog.length > 0 && (
+          <div className="mt-1.5 font-mono text-[10px] text-stone-600 truncate" title={sim.damageLog[sim.damageLog.length - 1]}>
+            ▸ {sim.damageLog[sim.damageLog.length - 1]}
+          </div>
+        )}
+      </div>
+
       <div>
         <div className="flex justify-between items-baseline mb-1.5">
           <span className="section-label flex items-center gap-1.5"><Gauge size={12} /> Wheel slip S(t)</span>

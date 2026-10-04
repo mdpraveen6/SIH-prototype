@@ -3,6 +3,8 @@ import Header from './components/Header';
 import PerceptionStreams from './components/PerceptionStreams';
 import ControlConsole from './components/ControlConsole';
 import SensorPanel from './components/SensorPanel';
+import SurveyPanel from './components/SurveyPanel';
+import DatasetPanel from './components/DatasetPanel';
 import { SimProvider } from './sim/store';
 
 // Three.js is heavy — load the 3D viewport on demand for a fast first paint.
@@ -13,8 +15,10 @@ const TelemetryPanel = React.lazy(() => import('./components/TelemetryPanel'));
 const LEGEND: [string, string][] = [
   ['#1B5E43', 'Optimal MPPI path'],
   ['#227356', 'Sampled rollouts'],
-  ['#DC2626', 'Layer-0 shield 0.8 m'],
-  ['#B45309', 'Proximity alert 3.5 m']
+  ['#DC2626', 'Layer-0 shield 1.0 m'],
+  ['#B45309', 'Proximity alert 3.5 m'],
+  ['#22d3ee', 'Pit survey grid'],
+  ['#92400e', 'Mud pit / pothole']
 ];
 
 export default function App() {
@@ -45,9 +49,13 @@ export default function App() {
             </div>
             <ControlConsole />
           </div>
-          <div className="space-y-4 order-3 lg:col-span-2 xl:col-span-1">
+          <div className="space-y-4 order-4 lg:col-span-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:row-span-2">
             <PerceptionStreams />
             <SensorPanel />
+            <SurveyPanel />
+          </div>
+          <div className="order-3 lg:order-3 lg:col-span-2 xl:col-span-2 min-w-0">
+            <DatasetPanel />
           </div>
         </main>
         <footer className="px-4 pb-5 font-sans text-[11px] text-stone-400 max-w-[1720px] mx-auto">
