@@ -45,11 +45,11 @@ export interface PresetDef {
   pits: number; // small (straddlable) mud pits
   pitL: number; // large mud pits (survey → usually reroute)
   holes: number; // potholes (survey → usually reroute)
-  cars: number; // parked vehicles (urban)
+  cars: number; // parked vehicles
   cones: number; // traffic cones / temporary markers
-  crops: number; // crop plants in row bands (farm)
+  crops: number; // crop plants in row bands
   posts: number; // fence posts / lamp poles
-  buildings: number; // farm + urban structures (solid)
+  buildings: number; // structures (solid)
   roads?: Array<{ axis: 'x' | 'y'; at: number; w: number; soil: SoilId }>;
   roundabout?: { x: number; y: number; r: number; w: number; soil: SoilId };
   traffic?: { car: number; moto: number; ped: number; cycle: number; tractor: number; worker: number; animal: number };
@@ -91,36 +91,6 @@ export const PRESETS: PresetDef[] = [
     elevAmp: 2.2, elevFreq: 0.028, trees: 16, rocks: 45, bushes: 28, mud: 4, water: 2, sand: 2,
     pits: 3, pitL: 2, holes: 3, cars: 0, cones: 0, crops: 0, posts: 0, buildings: 0,
     smoke: 10, thermal: 74, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35'
-  },
-  {
-    id: 'urban', label: 'Urban Road', desc: 'Avenues · roundabout · parked cars · signals',
-    seed: 5150, weights: { asphalt: 0.4, concrete: 0.22, packed: 0.12, grass: 0.08, gravel: 0.08, rocky: 0.02, sand: 0.02, clay: 0.02, snow: 0, crop: 0 },
-    elevAmp: 0.5, elevFreq: 0.015, trees: 12, rocks: 0, bushes: 8, mud: 0, water: 0, sand: 0,
-    pits: 1, pitL: 0, holes: 1, cars: 17, cones: 10, crops: 0, posts: 11, buildings: 10,
-    smoke: 18, thermal: 72, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35',
-    roads: [
-      { axis: 'x', at: 0, w: 9, soil: 'asphalt' },
-      { axis: 'y', at: -8, w: 7, soil: 'asphalt' }
-    ],
-    roundabout: { x: 28, y: -14, r: 7, w: 5, soil: 'asphalt' },
-    traffic: { car: 5, moto: 2, ped: 4, cycle: 1, tractor: 0, worker: 0, animal: 0 }
-  },
-  {
-    id: 'farm', label: 'Agri Farm', desc: 'Crop rows · dirt track · irrigation · livestock',
-    seed: 7300, weights: { grass: 0.22, packed: 0.18, clay: 0.2, gravel: 0.08, rocky: 0.06, sand: 0.04, crop: 0.2, asphalt: 0, concrete: 0.02, snow: 0 },
-    elevAmp: 2.0, elevFreq: 0.03, trees: 20, rocks: 16, bushes: 24, mud: 8, water: 10, sand: 0,
-    pits: 3, pitL: 1, holes: 2, cars: 0, cones: 0, crops: 800, posts: 0, buildings: 0,
-    smoke: 8, thermal: 70, treeline: null, snowline: null, canopy: '#3d4d26', canopyHi: '#576b35',
-    zones: [
-      { x0: -75, y0: -45, x1: -30, y1: -20, soil: 'crop' },
-      { x0: -24, y0: -45, x1: 21, y1: -20, soil: 'crop' },
-      { x0: 27, y0: -45, x1: 72, y1: -20, soil: 'packed' },
-      { x0: -75, y0: -14, x1: -30, y1: 11, soil: 'clay' },
-      { x0: -24, y0: -14, x1: 21, y1: 11, soil: 'crop' },
-      { x0: 27, y0: -14, x1: 72, y1: 11, soil: 'crop' }
-    ],
-    spawn: { x: 2, y: -17, theta: 0 },
-    traffic: { car: 0, moto: 0, ped: 0, cycle: 0, tractor: 1, worker: 3, animal: 4 }
   }
 ];
 

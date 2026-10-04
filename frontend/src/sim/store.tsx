@@ -386,7 +386,7 @@ export class SparshSim {
     this.applyPreset('ghats');
   }
 
-  /** Start pose for the active preset (farm starts at the gap crossroads). */
+  /** Start pose for the active preset. */
   private spawnOf(): { x: number; y: number; theta: number } {
     return this.preset.spawn ?? { x: -12, y: 0, theta: 0 };
   }
@@ -460,63 +460,6 @@ export class SparshSim {
         placed++;
       }
     };
-    // straight-line placement: curbs, lamp rows, fence runs (skipP = gaps)
-    const placeLine = (kind: ObstacleKind, x0: number, y0: number, x1: number, y1: number, step: number, r: number, skipP = 0, tall = false) => {
-      const len = Math.hypot(x1 - x0, y1 - y0);
-      const n = Math.max(1, Math.floor(len / step));
-      for (let i = 0; i <= n; i++) {
-        if (skipP > 0 && rng() < skipP) continue;
-        const x = x0 + ((x1 - x0) * i) / n;
-        const y = y0 + ((y1 - y0) * i) / n;
-        if (Math.hypot(x - sp0.x, y - sp0.y) < 8) continue;
-        this.obstacles.push({ id: this.nextId++, x, y, r, kind, tall });
-      }
-    };
-    // blocky structures away from roads and spawn
-    const placeBlock = (kind: ObstacleKind, count: number) => {
-      let placed = 0;
-      let guard = 0;
-      while (placed < count && guard++ < 300) {
-        const x = (rng() * 2 - 1) * (WORLD_W / 2 - 10);
-        const y = (rng() * 2 - 1) * (WORLD_H / 2 - 10);
-        if (Math.hypot(x - sp0.x, y - sp0.y) < 12) continue;
-        if (activeTerrain.roadAt(x, y)) continue; // never on the carriageway
-        let ok = true;
-        for (const o of this.obstacles) {
-          if (Math.hypot(o.x - x, o.y - y) < o.r + 9) {
-            ok = false;
-            break;
-          }
-        }
-        if (!ok) continue;
-        this.obstacles.push({ id: this.nextId++, x, y, r: 3.5 + rng() * 3.5, kind });
-        placed++;
-      }
-    };
-    // clustered scatter: ponds, rock piles (gaussian around a center)
-    const placeCluster = (kind: ObstacleKind, cx: number, cy: number, count: number, spread: number, rMin: number, rMax: number) => {
-      for (let i = 0; i < count; i++) {
-        const a = rng() * Math.PI * 2;
-        const d = Math.abs(rng() + rng() - 1) * spread;
-        const x = cx + Math.cos(a) * d;
-        const y = cy + Math.sin(a) * d;
-        if (Math.hypot(x - sp0.x, y - sp0.y) < 8) continue;
-        this.obstacles.push({ id: this.nextId++, x, y, r: rMin + rng() * (rMax - rMin), kind });
-      }
-    };
-    const placeCropRows = (x0: number, x1: number, y0: number, y1: number, rowGap: number, plantGap: number, count: number, variant = 'wheat', skipP = 0.12) => {
-      let placed = 0;
-      for (let ry = y0; ry <= y1 && placed < count; ry += rowGap) {
-        for (let rx = x0; rx <= x1 && placed < count; rx += plantGap) {
-          if (rng() < skipP) continue; // missing plant
-          const jx = (rng() - 0.5) * 0.5;
-          const jy = (rng() - 0.5) * 0.6;
-          const s = variant === 'maize' ? 1.1 + rng() * 0.5 : variant === 'seedling' ? 0.4 + rng() * 0.25 : variant === 'stubble' ? 0.3 + rng() * 0.2 : 0.7 + rng() * 0.6;
-          this.obstacles.push({ id: this.nextId++, x: rx + jx, y: ry + jy, r: 0.32 * s, kind: 'crop', variant });
-          placed++;
-        }
-      }
-    };
     place('tree', p.trees, 0.45, 0.75, p.treeline);
     place('boulder', p.rocks, 0.7, 1.5);
     place('bush', p.bushes, 0.7, 1.2);
@@ -531,28 +474,6 @@ export class SparshSim {
     this.movers = [];
     this.eventT = 15;
     this.initTraffic();
-    if (p.id === 'urban') {
-      // parked cars line both avenue curbs with gaps, lamps on poles
-      placeLine('car_parked', -60, 6.2, 60, 6.2, 15, 2.1, 0.35);
-      placeLine('car_parked', -60, -6.2, 40, -6.2, 17, 2.1, 0.4);
-      placeLine('post', -55, -5.8, 55, -5.8, 18, 0.15, 0, true);
-      placeLine('post', -14.5, -50, -14.5, 40, 18, 0.15, 0, true);
-      placeBlock('building', 10);
-      place('cone', 4, 0.22, 0.3);
-    }
-    if (p.id === 'farm') {
-      // six plots wall-to-wall with grass gaps, no roads, no fences:
-      // A wheat · B maize · C stubble · D seedlings · E maize · F wheat
-      // + two pond clusters for irrigation character
-      placeCropRows(-75, -30, -45, -20, 1.6, 1.3, 180, 'wheat');
-      placeCropRows(-24, 21, -45, -20, 1.8, 1.4, 150, 'maize');
-      placeCropRows(27, 72, -45, -20, 2.2, 1.8, 40, 'stubble', 0.55);
-      placeCropRows(-75, -30, -14, 11, 1.4, 1.2, 130, 'seedling', 0.08);
-      placeCropRows(-24, 21, -14, 11, 1.8, 1.4, 150, 'maize');
-      placeCropRows(27, 72, -14, 11, 1.6, 1.3, 150, 'wheat');
-      placeCluster('water', 55, 2, 4, 6, 1.2, 1.8);
-      placeCluster('water', -55, 22, 3, 5, 1.2, 1.8);
-    }
     // nominal population snapshot for the land classifier: movers and future
     // dynamic drops never vote, only what the surveyors placed at build time
     this.nominalObs = {};
@@ -902,83 +823,20 @@ export class SparshSim {
     if (mi >= 0) this.movers.splice(mi, 1);
   }
 
-  /** Seed preset traffic: lane cars, weavers, wanderers, farm life. */
+  /** Seed preset traffic: no-op — off-road presets have no traffic. */
   private initTraffic() {
     this.movers = [];
     this.signals = [];
-    const tr = this.preset.traffic;
-    if (!tr) return;
-    if (this.preset.id === 'urban') {
-      this.signals = [
-        { x: -13, y: 5.5, axis: 'x', state: 'G' },
-        { x: -2.5, y: -5.5, axis: 'y', state: 'R' }
-      ];
-      const carKinds = ['car', 'bus', 'truck'];
-      for (let i = 0; i < tr.car; i++) {
-        const lane = i % 4;
-        const L = this.laneDef(lane);
-        const s = (i / Math.max(1, tr.car)) * L.sMax * 0.9 + 5;
-        const sub = ['car', 'car', 'bus', 'truck'][i % 4];
-        const p = this.lanePos(lane, s);
-        const v0 = sub === 'bus' ? 5 : sub === 'truck' ? 4.5 : 7 + (i % 3);
-        this.spawnMover('car', p.x, p.y, p.theta, v0, sub === 'car' ? 2.1 : 2.6, 'lane', { lane, s, sub });
-      }
-      for (let i = 0; i < 2; i++) { // roundabout circulators
-        const a = (i / 2) * Math.PI * 2;
-        this.spawnMover('car', 28 + Math.cos(a) * 7, -14 + Math.sin(a) * 7, a + Math.PI / 2, 5, 2.1, 'ring', { lane: 99, s: a, sub: 'car' });
-      }
-      for (let i = 0; i < tr.moto; i++) {
-        const lane = i % 2;
-        const L = this.laneDef(lane);
-        const p = this.lanePos(lane, 20 + i * 60);
-        this.spawnMover('moto', p.x, p.y, p.theta, 9 + i, 0.5, 'lane', { lane, s: 20 + i * 60, sub: 'moto' });
-      }
-      for (let i = 0; i < tr.ped; i++) {
-        const side = i % 2 === 0 ? 6.5 : -6.5;
-        const x = -50 + i * 25;
-        this.spawnMover('ped', x, side, 0, 0.9 + (i % 3) * 0.3, 0.35, 'wander', { tx: x + 20, ty: side, sub: 'ped' });
-      }
-      const cp = this.lanePos(0, 40);
-      this.spawnMover('moto', cp.x, 3.6, 0, 3.5, 0.45, 'lane', { lane: 0, s: 40, sub: 'cycle' });
-    }
-    if (this.preset.id === 'farm') {
-      this.spawnMover('tractor', -70, -30, 0, 1.2, 1.6, 'work', { tx: 60, ty: -30, sub: 'tractor' });
-      for (let i = 0; i < tr.worker; i++) {
-        this.spawnMover('ped', -40 + i * 20, -25 + (i % 2) * 8, 0, 1.0, 0.35, 'wander', { tx: -30 + i * 15, ty: -32, sub: 'worker' });
-      }
-      for (let i = 0; i < tr.animal; i++) {
-        const sub = i % 2 === 0 ? 'cow' : 'goat';
-        this.spawnMover('animal', 10 + i * 8, -32 + (i % 3) * 4, 0, 0.5, sub === 'cow' ? 0.6 : 0.4, 'graze', { pauseT: 2 + i * 2, sub });
-      }
-    }
     this.eventT = 15;
   }
 
-  /** Timed surprises: jaywalker, parked-car pull-out, sudden brake. */
+  /** Timed surprises: sudden brake. */
   private fireEvent() {
-    const roll = Math.random();
-    if (this.preset.id === 'urban' && roll < 0.4) {
-      // jaywalker darts across the avenue (temp, despawns across)
-      const zx = [-11.5, -4.5][Math.floor(Math.random() * 2)];
-      const y0 = Math.random() < 0.5 ? 7 : -7;
-      this.spawnMover('ped', zx, y0, y0 > 0 ? -Math.PI / 2 : Math.PI / 2, 1.6, 0.35, 'cross', { tx: zx, ty: -y0, temp: true, sub: 'ped' });
-      this.replanMsg = `EVENT · jaywalker @ x${zx.toFixed(0)}`;
-    } else if (this.preset.id === 'urban' && roll < 0.7) {
-      // parked car pulls into the eastbound lane
-      const cand = this.obstacles.find((o) => o.kind === 'car_parked' && Math.abs(o.y - 6.2) < 2.5 && Math.abs(o.x) < 50);
-      if (cand) {
-        const oi = this.obstacles.findIndex((o) => o.id === cand.id);
-        if (oi >= 0) this.obstacles.splice(oi, 1);
-        this.spawnMover('car', cand.x, cand.y, 0, 3, 2.1, 'merge', { tx: cand.x + 12, ty: -2.2, sub: 'car' });
-        this.replanMsg = 'EVENT · parked car pulling out';
-      }
-    } else {
-      // sudden brake: a random lane car holds 3 s, followers queue behind
-      const cars = this.movers.filter((m) => m.mode === 'lane' && m.oKind === 'car');
-      if (cars.length) {
-        cars[Math.floor(Math.random() * cars.length)].stopT = 3;
-        this.replanMsg = 'EVENT · vehicle braking hard';
-      }
+    // sudden brake: a random lane car holds 3 s, followers queue behind
+    const cars = this.movers.filter((m) => m.mode === 'lane' && m.oKind === 'car');
+    if (cars.length) {
+      cars[Math.floor(Math.random() * cars.length)].stopT = 3;
+      this.replanMsg = 'EVENT · vehicle braking hard';
     }
     this.eventT = 18 + Math.random() * 17;
   }
@@ -986,7 +844,7 @@ export class SparshSim {
   private stepTraffic(dt: number) {
     for (const s of this.signals) s.state = this.signalFor(s.axis);
     this.eventT -= dt;
-    if (this.eventT <= 0 && this.movers.length && (this.preset.id === 'urban' || this.preset.id === 'farm')) this.fireEvent();
+    if (this.eventT <= 0 && this.movers.length) this.fireEvent();
     if (!this.movers.length) return;
     // per-lane ordering for car following
     const byLane = new Map<number, Mover[]>();
@@ -1056,7 +914,8 @@ export class SparshSim {
           m.v = Math.min(m.v, m.v0);
         }
       } else if (m.mode === 'ring') {
-        const rb = this.preset.roundabout!;
+        const rb = this.preset.roundabout;
+        if (!rb) { this.removeMover(m); continue; }
         const a = m.s + (m.v / rb.r) * dt;
         m.s = a;
         m.x = rb.x + Math.cos(a) * rb.r;
@@ -1114,11 +973,6 @@ export class SparshSim {
                   m.lane = 0;
                   m.s = m.x + 120;
                   m.v0 = 7;
-                } else if (this.preset.id === 'urban') {
-                  // next sidewalk stroll (stay on curbs, cross only at zebras)
-                  const side = Math.random() < 0.5 ? 6.5 : -6.5;
-                  m.tx = -55 + Math.random() * 110;
-                  m.ty = side;
                 } else {
                   m.tx = -60 + Math.random() * 120;
                   m.ty = -40 + Math.random() * 55;
@@ -1303,13 +1157,13 @@ export class SparshSim {
       }
       const soilCos = dot / (Math.sqrt(no * nw) || 1);
       // obstacle cosine: exact build-time snapshot for this world, placement
-      // recipes elsewhere (line/row extras folded in as documented estimates)
+      // recipes elsewhere
       const recipe = (q: typeof p, k: string): number => {
         const base: Record<string, number> = {
           tree: q.trees, boulder: q.rocks, bush: q.bushes, mud: q.mud,
-          water: q.water + (q.id === 'farm' ? 7 : 0),
+          water: q.water,
           sand: q.sand, pit_small: q.pits, pit_large: q.pitL, pothole: q.holes,
-          car_parked: q.cars, cone: q.cones + (q.id === 'urban' ? 4 : 0),
+          car_parked: q.cars, cone: q.cones,
           crop: q.crops, post: q.posts, building: q.buildings
         };
         return base[k] ?? 0;

@@ -866,15 +866,6 @@ export default function SimulationCanvas() {
         addFlat(new THREE.RingGeometry(rb.r - rb.w / 2, rb.r + rb.w / 2, 48), roadMat, rb.x, rb.y, 0.03);
         addFlat(new THREE.CircleGeometry(rb.r - rb.w / 2, 32), new THREE.MeshStandardMaterial({ color: '#4a4f35', roughness: 1 }), rb.x, rb.y, 0.04);
       }
-      // zebra crossings + stop line at the main intersection
-      if (preset.id === 'urban') {
-        for (const zx of [-11.5, -4.5]) {
-          for (let k = 0; k < 5; k++) {
-            addFlat(new THREE.PlaneGeometry(0.6, 3.4), paintMat, zx, -3.4 + k * 1.7, 0.05);
-          }
-        }
-        addFlat(new THREE.PlaneGeometry(0.5, 7), paintMat, -12.5, 0, 0.05);
-      }
     };
     syncRoads();
 
